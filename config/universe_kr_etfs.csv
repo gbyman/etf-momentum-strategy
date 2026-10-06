@@ -1,0 +1,38 @@
+ticker,name,category,enabled,group
+069500.KS,KODEX 200,Korea Broad,1,kr_broad
+102110.KS,TIGER 200,Korea Broad,1,kr_broad
+226490.KS,KODEX KOSPI,Korea Broad,1,kr_broad
+229200.KS,KODEX KOSDAQ150,Korea Broad,1,
+278540.KS,KODEX MSCI Korea TR,Korea Broad,1,kr_broad
+292150.KS,TIGER TOP10,Korea Large Cap,1,kr_broad
+102780.KS,KODEX Samsung Group,Korea Theme,1,
+091160.KS,KODEX Semicon,Korea Sector,1,kr_semis
+091230.KS,TIGER Semicon,Korea Sector,1,kr_semis
+139260.KS,TIGER 200 IT,Korea Sector,1,kr_semis
+139230.KS,TIGER 200 Heavy Industry,Korea Sector,1,
+139220.KS,TIGER 200 Construction,Korea Sector,1,kr_construction
+139240.KS,TIGER 200 Steel Materials,Korea Sector,1,kr_steel
+139250.KS,TIGER 200 Energy & Chemicals,Korea Sector,1,kr_energy_chem
+139270.KS,TIGER 200 Financials,Korea Sector,1,kr_financials
+139280.KS,TIGER 200 Consumer Discretionary,Korea Sector,1,
+139290.KS,TIGER 200 Energy & Chemicals,Korea Sector,1,
+091170.KS,KODEX Banks,Korea Sector,1,kr_financials
+102970.KS,KODEX Securities,Korea Sector,1,
+117460.KS,KODEX Energy & Chemicals,Korea Sector,1,kr_energy_chem
+117680.KS,KODEX Steel,Korea Sector,1,kr_steel
+117700.KS,KODEX Construction,Korea Sector,1,kr_construction
+140710.KS,KODEX Transportation,Korea Sector,1,
+266390.KS,KODEX Consumer Discretionary,Korea Sector,1,
+305720.KS,KODEX Secondary Battery Industry,Korea Theme,1,kr_battery
+305540.KS,TIGER Secondary Battery Theme,Korea Theme,1,kr_battery
+244580.KS,KODEX Bio,Korea Theme,1,kr_healthcare
+143860.KS,TIGER Health Care,Korea Theme,1,kr_healthcare
+300950.KS,KODEX Game Industry,Korea Theme,1,
+395150.KS,KODEX Webtoon & Drama,Korea Theme,1,
+375770.KS,KODEX Carbon Efficient Green New Deal,Korea Theme,0,kr_broad
+404260.KS,KODEX Climate Change Solution,Korea Theme,1,
+153130.KS,KODEX Short-Term Bond,Korea Cash,1,
+114260.KS,KODEX Treasury Bond 3Y,Korea Bond,0,
+148070.KS,KOSEF Treasury Bond 10Y,Korea Bond,0,
+132030.KS,KODEX Gold Futures H,Korea Commodity,1,
+261220.KS,KODEX WTI Crude Oil Futures H,Korea Commodity,1,

@@ -1,0 +1,34 @@
+ticker,name,category,enabled,group
+SPY,S&P 500,Benchmark,1,
+QQQ,Nasdaq 100,Broad Growth,1,us_large_growth
+IWM,Russell 2000,Broad Small Cap,1,
+DIA,Dow Jones Industrial Average,Broad Large Cap,1,
+XLK,Technology,SPDR Sector,1,us_large_growth
+XLC,Communication Services,SPDR Sector,1,
+XLY,Consumer Discretionary,SPDR Sector,1,
+XLP,Consumer Staples,SPDR Sector,1,
+XLE,Energy,SPDR Sector,1,
+XLF,Financials,SPDR Sector,1,
+XLV,Health Care,SPDR Sector,1,
+XLI,Industrials,SPDR Sector,1,
+XLB,Materials,SPDR Sector,1,
+XLRE,Real Estate,SPDR Sector,1,us_real_estate
+XLU,Utilities,SPDR Sector,1,
+SMH,Semiconductors,Theme,1,us_semis
+SOXX,Semiconductors,Theme,1,us_semis
+IGV,Software,Theme,1,us_software
+CIBR,Cybersecurity,Theme,1,us_software
+ITA,Aerospace & Defense,Theme,1,
+XBI,Biotech,Theme,1,us_biotech
+IBB,Biotech,Theme,1,us_biotech
+KRE,Regional Banks,Industry,1,
+XME,Metals & Mining,Industry,1,
+XRT,Retail,Industry,1,
+IYT,Transportation,Industry,1,
+TAN,Solar,Theme,1,us_clean_energy
+ICLN,Clean Energy,Theme,1,us_clean_energy
+URA,Uranium,Theme,1,
+VNQ,US REITs,Asset Class,1,us_real_estate
+GLD,Gold,Asset Class,1,
+TLT,Long Treasury,Asset Class,0,
+BIL,T-Bills,Cash,1,

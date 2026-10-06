@@ -1,0 +1,67 @@
+ticker,name,category,enabled,group,pension_ok,retirement_ok,risk_asset,proxy,note
+069500.KS,KODEX 200,Korea Broad,1,kr_broad,1,1,1,,
+102110.KS,TIGER 200,Korea Broad,1,kr_broad,1,1,1,,
+226490.KS,KODEX KOSPI,Korea Broad,1,kr_broad,1,1,1,,
+229200.KS,KODEX KOSDAQ150,Korea Broad,1,,1,1,1,,
+278540.KS,KODEX MSCI Korea TR,Korea Broad,1,kr_broad,1,1,1,,
+292150.KS,TIGER TOP10,Korea Large Cap,1,kr_broad,1,1,1,,
+102780.KS,KODEX Samsung Group,Korea Theme,1,,1,1,1,,
+091160.KS,KODEX Semicon,Korea Sector,1,kr_semis,1,1,1,,
+091230.KS,TIGER Semicon,Korea Sector,1,kr_semis,1,1,1,,
+139260.KS,TIGER 200 IT,Korea Sector,1,kr_semis,1,1,1,,
+139230.KS,TIGER 200 Heavy Industry,Korea Sector,1,,1,1,1,,
+139220.KS,TIGER 200 Construction,Korea Sector,1,kr_construction,1,1,1,,
+139240.KS,TIGER 200 Steel Materials,Korea Sector,1,kr_steel,1,1,1,,
+139250.KS,TIGER 200 Energy & Chemicals,Korea Sector,1,kr_energy_chem,1,1,1,,
+139270.KS,TIGER 200 Financials,Korea Sector,1,kr_financials,1,1,1,,
+139280.KS,TIGER 200 Consumer Discretionary,Korea Sector,1,,1,1,1,,
+139290.KS,TIGER 200 Energy & Chemicals,Korea Sector,1,,1,1,1,,
+091170.KS,KODEX Banks,Korea Sector,1,kr_financials,1,1,1,,
+102970.KS,KODEX Securities,Korea Sector,1,,1,1,1,,
+117460.KS,KODEX Energy & Chemicals,Korea Sector,1,kr_energy_chem,1,1,1,,
+117680.KS,KODEX Steel,Korea Sector,1,kr_steel,1,1,1,,
+117700.KS,KODEX Construction,Korea Sector,1,kr_construction,1,1,1,,
+140710.KS,KODEX Transportation,Korea Sector,1,,1,1,1,,
+266390.KS,KODEX Consumer Discretionary,Korea Sector,1,,1,1,1,,
+305720.KS,KODEX Secondary Battery Industry,Korea Theme,1,kr_battery,1,1,1,,
+305540.KS,TIGER Secondary Battery Theme,Korea Theme,1,kr_battery,1,1,1,,
+244580.KS,KODEX Bio,Korea Theme,1,kr_healthcare,1,1,1,,
+143860.KS,TIGER Health Care,Korea Theme,1,kr_healthcare,1,1,1,,
+300950.KS,KODEX Game Industry,Korea Theme,1,,1,1,1,,
+395150.KS,KODEX Webtoon & Drama,Korea Theme,1,,1,1,1,,
+375770.KS,KODEX Carbon Efficient Green New Deal,Korea Theme,0,kr_broad,1,1,1,,
+404260.KS,KODEX Climate Change Solution,Korea Theme,1,,1,1,1,,
+153130.KS,KODEX Short-Term Bond,Korea Cash,1,,1,1,0,,
+114260.KS,KODEX Treasury Bond 3Y,Korea Bond,0,,1,1,0,,
+148070.KS,KOSEF Treasury Bond 10Y,Korea Bond,0,,1,1,0,,
+132030.KS,KODEX Gold Futures H,Korea Commodity,1,gold,1,0,1,,futures-based (derivative)
+261220.KS,KODEX WTI Crude Oil Futures H,Korea Commodity,1,,1,0,1,,futures-based (derivative)
+360750.KS,TIGER US S&P500,Overseas Equity,1,us_sp500,1,1,1,SPY,
+379800.KS,KODEX US S&P500TR,Overseas Equity,1,us_sp500,1,1,1,SPY,
+143850.KS,TIGER US S&P500 Futures(H),Overseas Equity,1,us_sp500,1,0,1,,"futures-based (derivative), FX hedged"
+133690.KS,TIGER US NASDAQ100,Overseas Equity,1,us_nasdaq100,1,1,1,,
+379810.KS,KODEX US NASDAQ100TR,Overseas Equity,1,us_nasdaq100,1,1,1,QQQ,
+368590.KS,KBSTAR/RISE US NASDAQ100,Overseas Equity,1,us_nasdaq100,1,1,1,QQQ,
+381170.KS,TIGER US Tech TOP10,Overseas Equity,1,us_bigtech,1,1,1,,
+465580.KS,ACE US Big Tech TOP7 Plus,Overseas Equity,1,us_bigtech,1,1,1,,
+314250.KS,KODEX US Big Tech 10(H),Overseas Equity,1,us_bigtech,1,1,1,,renamed from FANG Plus; FX hedged
+381180.KS,TIGER US PHLX Semiconductor,Overseas Equity,1,us_semis,1,1,1,SOXX,
+390390.KS,KODEX US Semiconductor MV,Overseas Equity,1,us_semis,1,1,1,SMH,
+245340.KS,TIGER US Dow Jones 30,Overseas Equity,1,,1,1,1,,
+458730.KS,TIGER US Dividend Dow Jones,Overseas Equity,1,,1,1,1,SCHD,
+280930.KS,KODEX US Russell2000(H),Overseas Equity,1,,1,1,1,,FX hedged
+218420.KS,KODEX Synth-US Energy,Overseas Equity,1,,1,0,1,,synthetic (derivative)
+182480.KS,TIGER Synth-MSCI US REIT(H),Overseas Equity,1,,1,0,1,,"synthetic (derivative), FX hedged"
+251350.KS,KODEX MSCI World,Overseas Equity,1,,1,1,1,,
+195930.KS,TIGER Synth-Euro Stoxx50(H),Overseas Equity,1,,1,0,1,,"synthetic (derivative), FX hedged"
+241180.KS,TIGER Japan Nikkei225,Overseas Equity,1,,1,1,1,,
+192090.KS,TIGER China CSI300,Overseas Equity,1,,1,1,1,,
+371460.KS,TIGER China Electric Vehicle,Overseas Equity,1,,1,1,1,,
+453870.KS,TIGER India Nifty50,Overseas Equity,1,india,1,1,1,INDA,
+200250.KS,KOSEF India Nifty50(Synth),Overseas Equity,1,india,1,0,1,,synthetic (derivative)
+394670.KS,TIGER Synth-Global Lithium & Battery,Overseas Equity,1,,1,0,1,,synthetic (derivative)
+329200.KS,TIGER REITs Real Estate Infra,Korea REIT,1,,1,1,1,,
+411060.KS,ACE KRX Physical Gold,Commodity,1,gold,1,1,1,GLD,
+305080.KS,TIGER US Treasury 10Y Futures,Overseas Bond,0,,1,0,0,,bond (safe asset); futures-based; excluded: bonds go to cash
+304660.KS,KODEX US Ultra Treasury 30Y Futures(H),Overseas Bond,0,,1,0,0,,bond (safe asset); futures-based; excluded: bonds go to cash
+453850.KS,ACE US 30Y Treasury Active(H),Overseas Bond,0,,1,1,0,,bond (safe asset); excluded: bonds go to cash

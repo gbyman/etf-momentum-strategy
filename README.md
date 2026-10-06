@@ -158,6 +158,8 @@ uv run etf-momentum backtest \
 --cash BIL             후보가 부족하거나 시장 위험 회피 시 보유할 현금성 ETF
                         (랭킹 후보에서 제외, 가격 데이터가 없으면 오류. none이면 미투자 현금)
 --risk-on-benchmark    벤치마크가 200일선 아래면 현금성 ETF로 이동
+--risk-on-ticker 069500.KS,360750.KS
+                        시장 필터 기준 티커(기본: --benchmark). 여러 개면 하나라도 200일선 위일 때 투자
 --require-relative-strength
                         벤치마크보다 모멘텀이 강한 ETF만 후보로 사용
 --min-relative-momentum 0.02
@@ -324,6 +326,33 @@ uv run etf-momentum portfolio --spec config/portfolio_spy_kr.json
 - `leverage`가 1보다 크면 빌린 금액에 `borrow_rate`(연, 날짜 수 기준) 이자를 내고, 1보다 작으면 나머지는 `cash_ticker` 수익률을 받습니다. 리스트로 주면 배율마다 시나리오가 만들어집니다.
 - 슬리브마다 휴장일이 다르면 그날은 수익률 0으로 처리합니다. 모든 슬리브에 데이터가 생긴 날부터 시작합니다.
 - 결과: `results/portfolio/portfolio_summary.csv`(시나리오×기간별 CAGR·MDD·Sharpe·변동성), `portfolio_equity.csv`.
+
+## 연금 계좌 (연금저축 / IRP·DC)
+
+`config/universe_kr_pension.csv`는 국내 섹터 ETF에 국내 상장 해외·원자재 ETF를 더한 연금 계좌용 유니버스입니다. 추가 컬럼:
+
+```text
+pension_ok     연금저축에서 매수 가능 (1/0)
+retirement_ok  퇴직연금(IRP·DC)에서 매수 가능. 합성·선물형(파생형) ETF는 0
+risk_asset     위험자산 여부. 채권·단기채는 0 (안전자산)
+proxy          상장 전 기간을 채울 미국 ETF 티커 (원화 환산)
+note           파생형, 환헤지, 상품명 변경 등 메모
+```
+
+```bash
+# 연금저축
+uv run etf-momentum walkforward --universe config/universe_kr_pension.csv \
+  --benchmark 069500.KS --cash 153130.KS --start 2010-01-01 \
+  --account pension --use-proxies --min-avg-traded-value 1e9 --transaction-cost-bps 10 \
+  --top-n-grid 3,4 --max-per-group-grid 1
+
+# IRP·DC: --account retirement (위험자산 합계 70% 상한이 자동 적용, 나머지는 --cash 안전자산)
+```
+
+- `--account pension|retirement`: 해당 계좌에서 살 수 있는 ETF만 후보로 씁니다. `retirement`는 `--max-risky-weight`를 따로 주지 않으면 0.7입니다. 이때 `--cash`는 단기채권 ETF 같은 안전자산이어야 합니다.
+- `--use-proxies`: 국내 상장 해외 ETF는 대부분 2020년 이후 상장이라, 상장 전 기간을 `proxy`(예: SPY)의 원화 환산 가격으로 채웁니다(`--proxy-fx KRW=X`). 상장일에 실제 가격과 이어지도록 맞추며, 보수·추적오차는 반영되지 않습니다. 거래대금도 같은 방식으로 채웁니다(환산만, 비율 조정 없음).
+- 계좌별 매수 가능 여부는 일반 규정 기준이며 증권사마다 다를 수 있습니다. 실제 계좌의 매수 가능 목록으로 확인하세요.
+- 티커와 상품명은 2026-10-06 야후 조회로 확인했습니다. 446720은 채권혼합형 상품이라 넣지 않았고, 314250은 'FANG플러스'에서 '미국빅테크10'으로 이름이 바뀐 상품입니다.
 
 ## ETF 유니버스 수정
 

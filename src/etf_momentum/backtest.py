@@ -37,6 +37,12 @@ class BacktestConfig:
     # Annualized volatility target for the invested sleeve. At each rebalance, exposure is scaled by
     # min(1, target / estimated portfolio volatility) and the rest goes to cash. None disables it.
     target_volatility: float | None = None
+    # Maximum total weight in non-cash holdings (retirement accounts: 0.7). The rest goes to the cash
+    # ETF, which must then be a safe asset such as a short-term bond ETF.
+    max_risky_weight: float = 1.0
+    # Market filter tickers for risk_on_benchmark (default: the benchmark). Risk-on when ANY of them
+    # closes above its SMA, e.g. ("069500.KS", "360750.KS") stays invested if Korea or the US is trending up.
+    risk_on_tickers: tuple[str, ...] | None = None
 
 
 def run_backtest(
@@ -49,6 +55,8 @@ def run_backtest(
     if config.accounting not in ACCOUNTING_CHOICES:
         raise ValueError(f"Unsupported accounting: {config.accounting}; choose from {', '.join(ACCOUNTING_CHOICES)}")
     prices = prices.sort_index().dropna(axis=1, how="all").ffill()
+    if config.max_risky_weight < 1.0 and not config.cash_ticker:
+        raise ValueError("max_risky_weight < 1 needs a cash_ticker (safe asset) to hold the remainder")
     if config.cash_ticker and config.cash_ticker not in prices.columns:
         raise ValueError(f"Cash ticker {config.cash_ticker} has no price data; pass cash_ticker=None to hold uninvested cash")
     returns = prices.pct_change().fillna(0.0)
@@ -84,6 +92,7 @@ def run_backtest(
         )
         weights = _select_weights(ranking, prices, rebalance_date, config)
         weights, vol_scale, est_vol = _apply_volatility_target(weights, prices, rebalance_date, config)
+        weights = _apply_risky_cap(weights, config)
         traded_notional = float((weights - previous_weights).abs().sum())
         turnover = traded_notional / 2.0
         cost = traded_notional * (config.transaction_cost_bps / 10_000.0)
@@ -151,6 +160,20 @@ def _apply_volatility_target(
         weights[risky.index] = risky * scale
         weights = _cash_weights(weights, config, float(risky.sum()) * (1.0 - scale))
     return weights, scale, est_vol
+
+
+def _above_sma(history: pd.Series, window: int) -> bool:
+    return bool(history.iloc[-1] > history.rolling(window).mean().iloc[-1])
+
+
+def _apply_risky_cap(weights: pd.Series, config: BacktestConfig) -> pd.Series:
+    risky = weights[(weights > 0) & (weights.index != config.cash_ticker)]
+    total = float(risky.sum())
+    if total <= config.max_risky_weight + 1e-12:
+        return weights
+    weights = weights.copy()
+    weights[risky.index] = risky * (config.max_risky_weight / total)
+    return _cash_weights(weights, config, total - config.max_risky_weight)
 
 
 def _liquidity_excluded(ranking: pd.DataFrame) -> str:
@@ -240,10 +263,10 @@ def _select_weights(
 ) -> pd.Series:
     weights = pd.Series(0.0, index=prices.columns)
     risk_on = True
-    if config.risk_on_benchmark and config.benchmark in prices.columns:
-        benchmark_history = prices.loc[:rebalance_date, config.benchmark]
-        benchmark_sma = benchmark_history.rolling(config.momentum.sma_window).mean().iloc[-1]
-        risk_on = bool(benchmark_history.iloc[-1] > benchmark_sma)
+    if config.risk_on_benchmark:
+        filters = [t for t in (config.risk_on_tickers or (config.benchmark,)) if t in prices.columns]
+        if filters:
+            risk_on = any(_above_sma(prices.loc[:rebalance_date, t], config.momentum.sma_window) for t in filters)
 
     if not risk_on:
         return _cash_weights(weights, config)

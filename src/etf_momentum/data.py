@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Iterable
 
+import numpy as np
 import pandas as pd
 import yfinance as yf
 
@@ -23,6 +24,14 @@ class UniverseMember:
     name: str
     category: str
     group: str = ""
+    # Optional account columns (default: allowed / risk asset / no proxy).
+    pension_ok: bool = True  # personal pension (연금저축)
+    retirement_ok: bool = True  # retirement pension (IRP / DC)
+    risk_asset: bool = True  # counts toward the retirement-account 70% risky-asset limit
+    proxy: str = ""  # US ticker whose KRW-converted history fills the period before listing
+
+
+ACCOUNT_CHOICES = ("all", "pension", "retirement")
 
 
 def load_universe(path: str | Path) -> list[UniverseMember]:
@@ -40,6 +49,10 @@ def load_universe(path: str | Path) -> list[UniverseMember]:
             name=str(row.name).strip(),
             category=str(row.category).strip(),
             group=_optional_text(getattr(row, "group", "")),
+            pension_ok=_optional_flag(getattr(row, "pension_ok", 1)),
+            retirement_ok=_optional_flag(getattr(row, "retirement_ok", 1)),
+            risk_asset=_optional_flag(getattr(row, "risk_asset", 1)),
+            proxy=_optional_text(getattr(row, "proxy", "")),
         )
         for row in enabled.itertuples(index=False)
         if str(row.ticker).strip()
@@ -51,6 +64,52 @@ def load_universe(path: str | Path) -> list[UniverseMember]:
 
 def _optional_text(value: object) -> str:
     return "" if pd.isna(value) else str(value).strip()
+
+
+def _optional_flag(value: object) -> bool:
+    return True if pd.isna(value) else str(value).strip().lower() in {"1", "true", "yes", "y", "1.0"}
+
+
+def account_candidates(
+    members: Iterable[UniverseMember], account: str, benchmark: str | None, cash: str | None
+) -> tuple[str, ...]:
+    """Ranking candidates for an account type; the benchmark and cash ETF are reference assets only."""
+    if account not in ACCOUNT_CHOICES:
+        raise ValueError(f"Unsupported account: {account}; choose from {', '.join(ACCOUNT_CHOICES)}")
+    allowed = {
+        "all": lambda m: True,
+        "pension": lambda m: m.pension_ok,
+        "retirement": lambda m: m.retirement_ok,
+    }[account]
+    return tuple(m.ticker for m in members if m.ticker not in {benchmark, cash} and allowed(m))
+
+
+def splice_proxies(
+    frame: pd.DataFrame, proxies: dict[str, pd.Series], fx: pd.Series | None, scale: bool = True
+) -> tuple[pd.DataFrame, dict[str, pd.Timestamp]]:
+    """Fill each ticker's pre-listing rows with its proxy series converted by `fx` (local units per proxy unit).
+
+    The proxy is aligned to the local calendar (carried forward over its holidays). With `scale`
+    (prices) it is rescaled to meet the real series on the first listed day; without it (traded
+    value) it is only currency-converted. Returns the new frame and each ticker's first real date.
+    """
+    out = frame.copy()
+    starts: dict[str, pd.Timestamp] = {}
+    for ticker, proxy in proxies.items():
+        if ticker not in out.columns or out[ticker].dropna().empty:
+            continue
+        first = out[ticker].first_valid_index()
+        aligned = proxy.reindex(proxy.index.union(out.index)).ffill().reindex(out.index)
+        if fx is not None:
+            aligned = aligned * fx.reindex(fx.index.union(out.index)).ffill().reindex(out.index)
+        if scale:
+            if not np.isfinite(aligned.loc[first]) or aligned.loc[first] <= 0:
+                continue
+            aligned = aligned * (out.loc[first, ticker] / aligned.loc[first])
+        before = out.index < first
+        out.loc[before, ticker] = aligned.loc[before]
+        starts[ticker] = first
+    return out, starts
 
 
 def unique_tickers(members: Iterable[UniverseMember], extras: Iterable[str] = ()) -> list[str]:

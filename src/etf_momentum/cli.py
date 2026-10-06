@@ -11,7 +11,16 @@ import numpy as np
 import pandas as pd
 
 from etf_momentum.backtest import ACCOUNTING_CHOICES, BacktestConfig, run_backtest, summarize_performance
-from etf_momentum.data import download_prices, download_traded_value, load_universe, staleness_message, unique_tickers
+from etf_momentum.data import (
+    ACCOUNT_CHOICES,
+    account_candidates,
+    download_prices,
+    download_traded_value,
+    load_universe,
+    splice_proxies,
+    staleness_message,
+    unique_tickers,
+)
 from etf_momentum.portfolio import PortfolioConfig, align_sleeves, run_portfolio, to_base_currency
 from etf_momentum.reporting import ensure_output_dir, save_equity_chart, save_json, save_run_metadata
 from etf_momentum.signals import LIQUIDITY_MAX_STALE_DAYS, RANK_BY_CHOICES, MomentumConfig, rank_momentum
@@ -70,6 +79,12 @@ def main() -> None:
         default=None,
         help="Annualized volatility target (e.g. 0.15); scales exposure down with the rest in cash. Off by default",
     )
+    backtest_parser.add_argument(
+        "--risk-on-ticker",
+        default=None,
+        help="Comma-separated market filter tickers for --risk-on-benchmark (default: --benchmark); "
+        "risk-on if any is above its SMA",
+    )
     backtest_parser.set_defaults(func=run_backtest_command)
 
     compare_parser = subparsers.add_parser("compare", help="Compare rebalance and parameter combinations")
@@ -110,6 +125,12 @@ def main() -> None:
         default=None,
         help="Annualized volatility target (e.g. 0.15); scales exposure down with the rest in cash. Off by default",
     )
+    compare_parser.add_argument(
+        "--risk-on-ticker",
+        default=None,
+        help="Comma-separated market filter tickers for --risk-on-benchmark (default: --benchmark); "
+        "risk-on if any is above its SMA",
+    )
     compare_parser.set_defaults(func=run_compare_command)
 
     wf_parser = subparsers.add_parser("walkforward", help="Walk-forward out-of-sample test of parameter selection")
@@ -142,6 +163,12 @@ def main() -> None:
         default=None,
         help="Annualized volatility target (e.g. 0.15); scales exposure down with the rest in cash. Off by default",
     )
+    wf_parser.add_argument(
+        "--risk-on-ticker",
+        default=None,
+        help="Comma-separated market filter tickers for --risk-on-benchmark (default: --benchmark); "
+        "risk-on if any is above its SMA",
+    )
     wf_parser.set_defaults(func=run_walkforward_command)
 
     pf_parser = subparsers.add_parser("portfolio", help="Combine sleeves (ETFs, strategy curves) into one portfolio")
@@ -162,6 +189,7 @@ def run_rank_command(args: argparse.Namespace) -> None:
     start = _start_from_lookback_years(args.lookback_years)
     prices = _download(tickers, start, args)
     traded_value = _traded_value(tickers, start, args, prices)
+    prices, traded_value = _apply_proxies(members, prices, traded_value, start, args)
     save_run_metadata(output_dir, args, prices, traded_value=traded_value)
     config = _momentum_config_from_args(args)
     ranking = rank_momentum(prices, benchmark=args.benchmark, config=config, candidate_tickers=_candidates(members, args), traded_value=traded_value)
@@ -199,6 +227,7 @@ def run_weekly_command(args: argparse.Namespace) -> None:
     start = _start_from_lookback_years(args.lookback_years)
     prices = _download(tickers, start, args)
     traded_value = _traded_value(tickers, start, args, prices)
+    prices, traded_value = _apply_proxies(members, prices, traded_value, start, args)
     save_run_metadata(output_dir, args, prices, traded_value=traded_value)
     config = _momentum_config_from_args(args)
     ranking = rank_momentum(prices, benchmark=args.benchmark, config=config, candidate_tickers=_candidates(members, args), traded_value=traded_value)
@@ -254,14 +283,17 @@ def run_weekly_command(args: argparse.Namespace) -> None:
 def run_backtest_command(args: argparse.Namespace) -> None:
     output_dir = ensure_output_dir(args.output_dir)
     members = load_universe(args.universe)
-    tickers = unique_tickers(members, extras=[args.benchmark, args.cash])
+    tickers = unique_tickers(members, extras=[args.benchmark, args.cash, *(_risk_on_tickers(args) or ())])
     prices = _download(tickers, args.start, args)
     traded_value = _traded_value(tickers, args.start, args, prices)
+    prices, traded_value = _apply_proxies(members, prices, traded_value, args.start, args)
     save_run_metadata(output_dir, args, prices, traded_value=traded_value)
     momentum_config = _momentum_config_from_args(args)
     config = BacktestConfig(
         accounting=args.accounting,
         target_volatility=args.target_vol,
+        max_risky_weight=_max_risky_weight(args),
+        risk_on_tickers=_risk_on_tickers(args),
         top_n=args.top_n,
         rebalance=args.rebalance,
         cash_ticker=args.cash,
@@ -299,9 +331,10 @@ def run_backtest_command(args: argparse.Namespace) -> None:
 def run_compare_command(args: argparse.Namespace) -> None:
     output_dir = ensure_output_dir(args.output_dir)
     members = load_universe(args.universe)
-    tickers = unique_tickers(members, extras=[args.benchmark, args.cash])
+    tickers = unique_tickers(members, extras=[args.benchmark, args.cash, *(_risk_on_tickers(args) or ())])
     prices = _download(tickers, args.start, args)
     traded_value = _traded_value(tickers, args.start, args, prices)
+    prices, traded_value = _apply_proxies(members, prices, traded_value, args.start, args)
     save_run_metadata(output_dir, args, prices, traded_value=traded_value)
 
     base_momentum = _momentum_config_from_args(args)
@@ -336,6 +369,8 @@ def run_compare_command(args: argparse.Namespace) -> None:
                             config = BacktestConfig(
                                 accounting=args.accounting,
                                 target_volatility=args.target_vol,
+                                max_risky_weight=_max_risky_weight(args),
+                                risk_on_tickers=_risk_on_tickers(args),
                                 top_n=top_n,
                                 rebalance=rebalance,
                                 cash_ticker=args.cash,
@@ -382,6 +417,7 @@ def run_compare_command(args: argparse.Namespace) -> None:
                                     "accounting": args.accounting,
                                     "min_avg_traded_value": args.min_avg_traded_value,
                                     "target_vol": args.target_vol,
+                                    "account": args.account,
                                     "avg_turnover": avg_turnover,
                                     **metrics,
                                 }
@@ -426,9 +462,10 @@ def run_compare_command(args: argparse.Namespace) -> None:
 def run_walkforward_command(args: argparse.Namespace) -> None:
     output_dir = ensure_output_dir(args.output_dir)
     members = load_universe(args.universe)
-    tickers = unique_tickers(members, extras=[args.benchmark, args.cash])
+    tickers = unique_tickers(members, extras=[args.benchmark, args.cash, *(_risk_on_tickers(args) or ())])
     prices = _download(tickers, args.start, args)
     traded_value = _traded_value(tickers, args.start, args, prices)
+    prices, traded_value = _apply_proxies(members, prices, traded_value, args.start, args)
     save_run_metadata(output_dir, args, prices, traded_value=traded_value)
     if args.cash and args.cash not in prices.columns:
         raise SystemExit(f"Cash ticker {args.cash} has no price data; use --cash none to hold uninvested cash")
@@ -461,6 +498,8 @@ def run_walkforward_command(args: argparse.Namespace) -> None:
         config = BacktestConfig(
             accounting=args.accounting,
             target_volatility=args.target_vol,
+            max_risky_weight=_max_risky_weight(args),
+            risk_on_tickers=_risk_on_tickers(args),
             top_n=top_n,
             rebalance=rebalance,
             cash_ticker=args.cash,
@@ -495,6 +534,9 @@ def run_walkforward_command(args: argparse.Namespace) -> None:
             "transaction_cost_bps": args.transaction_cost_bps,
             "min_avg_traded_value": args.min_avg_traded_value,
             "target_vol": args.target_vol,
+            "account": args.account,
+            "max_risky_weight": _max_risky_weight(args),
+            "risk_on_ticker": args.risk_on_ticker,
         }
     if not returns:
         raise SystemExit("No parameter set produced a backtest")
@@ -685,6 +727,24 @@ def _add_common_args(parser: argparse.ArgumentParser) -> None:
         help="Exclude candidates whose 63-day average daily traded value is below this, in the ETF's currency "
         "(e.g. 1e9 = 10억 KRW, 2e7 = $20M); off by default",
     )
+    parser.add_argument(
+        "--account",
+        default="all",
+        choices=ACCOUNT_CHOICES,
+        help="Restrict candidates to ETFs allowed in this account (pension = 연금저축, retirement = IRP/DC)",
+    )
+    parser.add_argument(
+        "--max-risky-weight",
+        type=float,
+        default=None,
+        help="Cap on total non-cash weight; defaults to 0.7 for --account retirement, else 1.0",
+    )
+    parser.add_argument(
+        "--use-proxies",
+        action="store_true",
+        help="Fill pre-listing history of ETFs with a universe `proxy` ticker converted by --proxy-fx",
+    )
+    parser.add_argument("--proxy-fx", default="KRW=X", help="FX ticker: local currency per proxy currency unit")
     parser.add_argument("--cache-dir", default="data", help="Price cache directory")
     parser.add_argument("--output-dir", default="results", help="Output directory")
     parser.add_argument("--refresh", action="store_true", help="Refresh cached market data")
@@ -742,9 +802,39 @@ def _traded_value(
 
 
 def _candidates(members: list, args: argparse.Namespace) -> tuple[str, ...]:
-    """Universe members eligible for ranking: the benchmark and cash ETF are reference assets only."""
-    excluded = {args.benchmark, args.cash}
-    return tuple(member.ticker for member in members if member.ticker not in excluded)
+    """Universe members allowed in the chosen account; the benchmark and cash ETF are reference assets only."""
+    return account_candidates(members, args.account, args.benchmark, args.cash)
+
+
+def _risk_on_tickers(args: argparse.Namespace) -> tuple[str, ...] | None:
+    return tuple(_parse_str_list(args.risk_on_ticker)) if getattr(args, "risk_on_ticker", None) else None
+
+
+def _max_risky_weight(args: argparse.Namespace) -> float:
+    if args.max_risky_weight is not None:
+        return args.max_risky_weight
+    return 0.7 if args.account == "retirement" else 1.0
+
+
+def _apply_proxies(
+    members: list, prices: pd.DataFrame, traded_value: pd.DataFrame | None, start: str | None, args: argparse.Namespace
+) -> tuple[pd.DataFrame, pd.DataFrame | None]:
+    """With --use-proxies, fill each ETF's pre-listing history from its `proxy` ticker converted to local currency."""
+    proxies = {m.ticker: m.proxy for m in members if m.proxy and m.ticker in prices.columns}
+    if not args.use_proxies or not proxies:
+        return prices, traded_value
+    tickers = sorted(set(proxies.values()) | {args.proxy_fx})
+    proxy_prices = download_prices(tickers, start=start, end=args.end, cache_dir=args.cache_dir, refresh=args.refresh)
+    fx = proxy_prices[args.proxy_fx]
+    prices, starts = splice_proxies(prices, {t: proxy_prices[p] for t, p in proxies.items()}, fx)
+    if traded_value is not None:
+        proxy_value = download_traded_value(tickers, start=start, end=args.end, cache_dir=args.cache_dir, refresh=args.refresh)
+        available = {t: proxy_value[p] for t, p in proxies.items() if p in proxy_value.columns and t in traded_value.columns}
+        traded_value, _ = splice_proxies(traded_value, available, fx, scale=False)
+    args.proxy_history = {t: f"{proxies[t]} until {d.date()}" for t, d in starts.items() if d > prices.index[0]}
+    for ticker, text in args.proxy_history.items():
+        print(f"Proxy history: {ticker} <- {text}")
+    return prices, traded_value
 
 
 def _parse_cash(value: str) -> str | None:

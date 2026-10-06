@@ -34,6 +34,9 @@ class BacktestConfig:
     groups: Mapping[str, str] | None = None
     max_per_group: int | None = None
     accounting: str = "buy_and_hold"
+    # Annualized volatility target for the invested sleeve. At each rebalance, exposure is scaled by
+    # min(1, target / estimated portfolio volatility) and the rest goes to cash. None disables it.
+    target_volatility: float | None = None
 
 
 def run_backtest(
@@ -80,6 +83,7 @@ def run_backtest(
             traded_value=traded_value,
         )
         weights = _select_weights(ranking, prices, rebalance_date, config)
+        weights, vol_scale, est_vol = _apply_volatility_target(weights, prices, rebalance_date, config)
         traded_notional = float((weights - previous_weights).abs().sum())
         turnover = traded_notional / 2.0
         cost = traded_notional * (config.transaction_cost_bps / 10_000.0)
@@ -99,6 +103,8 @@ def run_backtest(
                 "turnover": turnover,
                 "traded_notional": traded_notional,
                 "transaction_cost": cost,
+                "est_portfolio_vol": est_vol,
+                "vol_scale": vol_scale,
                 "eligible_count": int(ranking["eligible"].sum()) if not ranking.empty else 0,
                 "liquidity_excluded": _liquidity_excluded(ranking),
                 "held_avg_traded_value": _held_traded_value(ranking, selected),
@@ -122,6 +128,29 @@ def run_backtest(
     metrics = summarize_performance(equity, risk_free=risk_free)
     metrics.update(_trading_metrics(pd.DataFrame(positions), equity))
     return equity, pd.DataFrame(positions), metrics
+
+
+def _apply_volatility_target(
+    weights: pd.Series, prices: pd.DataFrame, rebalance_date: pd.Timestamp, config: BacktestConfig
+) -> tuple[pd.Series, float, float]:
+    """Scale the non-cash holdings toward the volatility target; returns (weights, scale, estimated vol).
+
+    The estimate is the annualized volatility of the current target weights applied to the last
+    `momentum.volatility_window` daily returns up to the rebalance date. No leverage: scale <= 1.
+    """
+    risky = weights[(weights > 0) & (weights.index != config.cash_ticker)]
+    if risky.empty:
+        return weights, 1.0, np.nan
+    recent = prices[risky.index].loc[:rebalance_date].pct_change().tail(config.momentum.volatility_window)
+    est_vol = float((recent.fillna(0.0) @ risky).std() * np.sqrt(252))
+    if config.target_volatility is None or not np.isfinite(est_vol) or est_vol <= 0:
+        return weights, 1.0, est_vol
+    scale = min(1.0, config.target_volatility / est_vol)
+    if scale < 1.0:
+        weights = weights.copy()
+        weights[risky.index] = risky * scale
+        weights = _cash_weights(weights, config, float(risky.sum()) * (1.0 - scale))
+    return weights, scale, est_vol
 
 
 def _liquidity_excluded(ranking: pd.DataFrame) -> str:

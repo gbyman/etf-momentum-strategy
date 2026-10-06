@@ -1,0 +1,31 @@
+{
+  "base_currency": "KRW",
+  "start": "2010-01-01",
+  "fx": {"USD": "KRW=X"},
+  "cash_ticker": "153130.KS",
+  "borrow_rate": 0.07,
+  "rebalance_cost_bps": 5,
+  "periods": [["2016-03-03", "2025-02-28"], ["2016-03-03", null]],
+  "sleeves": {
+    "SPY": {"ticker": "SPY", "currency": "USD"},
+    "KODEX200": {"ticker": "069500.KS", "currency": "KRW"},
+    "KR_mom": {
+      "equity_csv": "results/walkforward/kr_10eok_10bp_robustgrid_tvoff/walkforward_equity.csv",
+      "column": "walk_forward",
+      "currency": "KRW"
+    },
+    "KR_mom_tv15": {
+      "equity_csv": "results/walkforward/kr_10eok_10bp_robustgrid_tv15/walkforward_equity.csv",
+      "column": "walk_forward",
+      "currency": "KRW"
+    }
+  },
+  "scenarios": [
+    {"name": "SPY 100", "weights": {"SPY": 1.0}},
+    {"name": "KODEX200 100", "weights": {"KODEX200": 1.0}},
+    {"name": "KR_mom 100", "weights": {"KR_mom": 1.0}},
+    {"name": "SPY 50 / KR_mom 50", "weights": {"SPY": 0.5, "KR_mom": 0.5}, "leverage": [1.0, 1.2, 1.4]},
+    {"name": "SPY 70 / KR_mom 30", "weights": {"SPY": 0.7, "KR_mom": 0.3}, "leverage": [1.0, 1.2, 1.4]},
+    {"name": "SPY 50 / KR_mom_tv15 50", "weights": {"SPY": 0.5, "KR_mom_tv15": 0.5}, "leverage": [1.0, 1.2, 1.4]}
+  ]
+}

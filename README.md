@@ -172,6 +172,8 @@ uv run etf-momentum backtest \
 --min-avg-traded-value 1e9
                         최근 63거래일 평균 일 거래대금(종가×거래량, ETF 통화 기준)이 이 값 미만인 ETF는 후보에서 제외.
                         예: 한국 1e9 = 10억 원, 미국 2e7 = 2천만 달러. 기본은 필터 없음
+--target-vol 0.15      변동성 목표. 리밸런싱 때 추정 포트폴리오 변동성이 목표보다 크면 투자 비중을
+                        목표/추정치만큼 줄이고 나머지는 현금으로 보유 (레버리지 없음). 기본은 끔
 --accounting buy_and_hold
                         보유 기간 회계. buy_and_hold(기본)는 리밸런싱 사이 비중이 가격에 따라 변하고,
                         daily_rebalanced는 매일 목표 비중으로 되돌린다고 가정
@@ -196,6 +198,12 @@ uv run etf-momentum backtest \
 
 - 변동성(`--volatility-window`, 기본 63일)을 계산할 수 없는 ETF는 후보에서 제외됩니다(`volatility_ok=False`). 백테스트 워밍업 기간에도 변동성 계산 기간이 포함됩니다.
 - `risk_adjusted_score`와 `inverse_vol` 비중은 연 변동성 5% 미만을 5%로 간주해 계산합니다. 변동성이 아주 낮은 채권 ETF나 부동소수점 오차가 극단적인 점수·비중을 만들지 않게 하기 위한 하한입니다. `realized_volatility` 컬럼에는 원래 값이 남습니다.
+
+## 변동성 목표
+
+`--target-vol`을 주면 리밸런싱마다 선택된 포트폴리오의 연환산 변동성을 리밸런싱일까지 최근 `--volatility-window`(기본 63)거래일 수익률로 추정하고, 투자 비중을 `min(1, 목표 / 추정치)`배로 줄입니다. 줄어든 만큼은 `--cash` ETF로 갑니다. 변동성이 큰 구간에 덜 투자해 급락 손실을 줄이려는 장치이며, 시장 필터(`--risk-on-benchmark`)와 함께 쓸 수 있습니다.
+
+`positions.csv`에는 추정 변동성(`est_portfolio_vol`)과 적용 배율(`vol_scale`)이 기록됩니다. 목표를 끈 상태에서도 추정 변동성은 기록됩니다.
 
 ## 성과 지표
 
@@ -301,6 +309,21 @@ hindsight_best   표본외 기간을 미리 알고 고른 최고 조합 (현실�
 
 결과 파일: `walkforward_summary.json`, `walkforward_equity.csv`, `walkforward_windows.csv`(구간별 선택 파라미터), `walkforward_grid.csv`.
 구간 경계에서 파라미터가 바뀔 때의 추가 매매비용은 반영하지 않습니다.
+
+## 포트폴리오 조합 (여러 전략·ETF 묶기)
+
+`portfolio` 명령은 여러 수익률 흐름(슬리브)을 하나의 포트폴리오로 묶어 기준 통화로 평가합니다.
+
+```bash
+uv run etf-momentum portfolio --spec config/portfolio_spy_kr.json
+```
+
+- 슬리브는 티커(`ticker`, 단순 보유) 또는 전략 수익 곡선 CSV(`equity_csv` + `column`)입니다. `config/portfolio_spy_kr.json`은 한국 모멘텀 슬리브로 `walkforward` 표본외 결과(`results/walkforward/...`)를 쓰므로, 해당 walk-forward를 먼저 실행해야 합니다.
+- 기준 통화와 다른 슬리브는 `fx` 환율(예: `KRW=X`, 달러당 원화)로 환산합니다.
+- 첫날과 매월 마지막 거래일에 목표 비중으로 재조정하고, 그 사이에는 비중이 가격에 따라 변합니다. 재조정 거래에는 `rebalance_cost_bps`가 붙습니다.
+- `leverage`가 1보다 크면 빌린 금액에 `borrow_rate`(연, 날짜 수 기준) 이자를 내고, 1보다 작으면 나머지는 `cash_ticker` 수익률을 받습니다. 리스트로 주면 배율마다 시나리오가 만들어집니다.
+- 슬리브마다 휴장일이 다르면 그날은 수익률 0으로 처리합니다. 모든 슬리브에 데이터가 생긴 날부터 시작합니다.
+- 결과: `results/portfolio/portfolio_summary.csv`(시나리오×기간별 CAGR·MDD·Sharpe·변동성), `portfolio_equity.csv`.
 
 ## ETF 유니버스 수정
 

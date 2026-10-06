@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import itertools
+import json
 from dataclasses import replace
 from datetime import date, timedelta
 from pathlib import Path
@@ -11,6 +12,7 @@ import pandas as pd
 
 from etf_momentum.backtest import ACCOUNTING_CHOICES, BacktestConfig, run_backtest, summarize_performance
 from etf_momentum.data import download_prices, download_traded_value, load_universe, staleness_message, unique_tickers
+from etf_momentum.portfolio import PortfolioConfig, align_sleeves, run_portfolio, to_base_currency
 from etf_momentum.reporting import ensure_output_dir, save_equity_chart, save_json, save_run_metadata
 from etf_momentum.signals import LIQUIDITY_MAX_STALE_DAYS, RANK_BY_CHOICES, MomentumConfig, rank_momentum
 from etf_momentum.walkforward import METRICS, walk_forward
@@ -62,6 +64,12 @@ def main() -> None:
         choices=ACCOUNTING_CHOICES,
         help="buy_and_hold: weights drift between rebalances; daily_rebalanced: weights reset daily",
     )
+    backtest_parser.add_argument(
+        "--target-vol",
+        type=float,
+        default=None,
+        help="Annualized volatility target (e.g. 0.15); scales exposure down with the rest in cash. Off by default",
+    )
     backtest_parser.set_defaults(func=run_backtest_command)
 
     compare_parser = subparsers.add_parser("compare", help="Compare rebalance and parameter combinations")
@@ -96,6 +104,12 @@ def main() -> None:
         choices=ACCOUNTING_CHOICES,
         help="buy_and_hold: weights drift between rebalances; daily_rebalanced: weights reset daily",
     )
+    compare_parser.add_argument(
+        "--target-vol",
+        type=float,
+        default=None,
+        help="Annualized volatility target (e.g. 0.15); scales exposure down with the rest in cash. Off by default",
+    )
     compare_parser.set_defaults(func=run_compare_command)
 
     wf_parser = subparsers.add_parser("walkforward", help="Walk-forward out-of-sample test of parameter selection")
@@ -122,7 +136,20 @@ def main() -> None:
         choices=ACCOUNTING_CHOICES,
         help="buy_and_hold: weights drift between rebalances; daily_rebalanced: weights reset daily",
     )
+    wf_parser.add_argument(
+        "--target-vol",
+        type=float,
+        default=None,
+        help="Annualized volatility target (e.g. 0.15); scales exposure down with the rest in cash. Off by default",
+    )
     wf_parser.set_defaults(func=run_walkforward_command)
+
+    pf_parser = subparsers.add_parser("portfolio", help="Combine sleeves (ETFs, strategy curves) into one portfolio")
+    pf_parser.add_argument("--spec", required=True, help="Portfolio spec JSON (see config/portfolio_spy_kr.json)")
+    pf_parser.add_argument("--cache-dir", default="data", help="Price cache directory")
+    pf_parser.add_argument("--output-dir", default="results/portfolio", help="Output directory")
+    pf_parser.add_argument("--refresh", action="store_true", help="Refresh cached market data")
+    pf_parser.set_defaults(func=run_portfolio_command)
 
     args = parser.parse_args()
     args.func(args)
@@ -234,6 +261,7 @@ def run_backtest_command(args: argparse.Namespace) -> None:
     momentum_config = _momentum_config_from_args(args)
     config = BacktestConfig(
         accounting=args.accounting,
+        target_volatility=args.target_vol,
         top_n=args.top_n,
         rebalance=args.rebalance,
         cash_ticker=args.cash,
@@ -307,6 +335,7 @@ def run_compare_command(args: argparse.Namespace) -> None:
                             )
                             config = BacktestConfig(
                                 accounting=args.accounting,
+                                target_volatility=args.target_vol,
                                 top_n=top_n,
                                 rebalance=rebalance,
                                 cash_ticker=args.cash,
@@ -352,6 +381,7 @@ def run_compare_command(args: argparse.Namespace) -> None:
                                     "max_per_group": args.max_per_group,
                                     "accounting": args.accounting,
                                     "min_avg_traded_value": args.min_avg_traded_value,
+                                    "target_vol": args.target_vol,
                                     "avg_turnover": avg_turnover,
                                     **metrics,
                                 }
@@ -430,6 +460,7 @@ def run_walkforward_command(args: argparse.Namespace) -> None:
         print(f"[{number}/{len(grid)}] {label}", flush=True)
         config = BacktestConfig(
             accounting=args.accounting,
+            target_volatility=args.target_vol,
             top_n=top_n,
             rebalance=rebalance,
             cash_ticker=args.cash,
@@ -463,6 +494,7 @@ def run_walkforward_command(args: argparse.Namespace) -> None:
             "accounting": args.accounting,
             "transaction_cost_bps": args.transaction_cost_bps,
             "min_avg_traded_value": args.min_avg_traded_value,
+            "target_vol": args.target_vol,
         }
     if not returns:
         raise SystemExit("No parameter set produced a backtest")
@@ -528,6 +560,86 @@ def run_walkforward_command(args: argparse.Namespace) -> None:
         )
     )
     print(f"\nSaved: {output_dir / 'walkforward_windows.csv'}")
+
+
+def run_portfolio_command(args: argparse.Namespace) -> None:
+    output_dir = ensure_output_dir(args.output_dir)
+    spec = json.loads(Path(args.spec).read_text(encoding="utf-8"))
+    sleeves_spec: dict[str, dict] = spec["sleeves"]
+    fx_tickers: dict[str, str] = spec.get("fx", {})
+    base = spec.get("base_currency", "KRW")
+    cash_ticker = spec.get("cash_ticker")
+
+    tickers = {sleeve["ticker"] for sleeve in sleeves_spec.values() if "ticker" in sleeve}
+    tickers |= {fx_tickers[sleeve["currency"]] for sleeve in sleeves_spec.values() if sleeve["currency"] != base}
+    if cash_ticker:
+        tickers.add(cash_ticker)
+    prices = download_prices(sorted(tickers), start=spec.get("start"), cache_dir=args.cache_dir, refresh=args.refresh)
+    print(f"Price data as of {pd.Timestamp(prices.index[-1]).date()}")
+    if message := staleness_message(prices):
+        print(f"WARNING: {message}")
+    save_run_metadata(output_dir, args, prices)
+
+    sleeve_returns: dict[str, pd.Series] = {}
+    for name, sleeve in sleeves_spec.items():
+        if "ticker" in sleeve:
+            series = prices[sleeve["ticker"]].dropna().pct_change().dropna()
+        else:
+            curve = pd.read_csv(sleeve["equity_csv"], index_col=0, parse_dates=True)[sleeve.get("column", "strategy")]
+            series = curve.dropna().pct_change().dropna()
+        fx = prices[fx_tickers[sleeve["currency"]]].dropna() if sleeve["currency"] != base else None
+        sleeve_returns[name] = to_base_currency(series, fx)
+    returns = align_sleeves(sleeve_returns)
+    cash_returns = prices[cash_ticker].pct_change() if cash_ticker else None
+
+    curves: dict[str, pd.Series] = {}
+    rows: list[dict[str, object]] = []
+    for scenario in spec["scenarios"]:
+        leverages = scenario.get("leverage", 1.0)
+        for leverage in leverages if isinstance(leverages, list) else [leverages]:
+            name = scenario["name"] + (f" x{leverage:g}" if leverage != 1.0 else "")
+            config = PortfolioConfig(
+                weights=scenario["weights"],
+                leverage=leverage,
+                borrow_rate=spec.get("borrow_rate", 0.07),
+                rebalance_cost_bps=spec.get("rebalance_cost_bps", 0.0),
+            )
+            equity, history = run_portfolio(returns, config, cash_returns=cash_returns)
+            curves[name] = equity
+            for start, end in spec.get("periods", [[None, None]]):
+                window = equity.loc[start:end]
+                metrics = summarize_performance((window / window.iloc[0]).to_frame("portfolio"), risk_free=cash_returns)
+                rows.append(
+                    {
+                        "scenario": name,
+                        "weights": ", ".join(f"{k} {v:.0%}" for k, v in config.weights.items()),
+                        "leverage": leverage,
+                        "period": f"{window.index[0].date()}~{window.index[-1].date()}",
+                        "cagr": metrics["portfolio_cagr"],
+                        "max_drawdown": metrics["portfolio_max_drawdown"],
+                        "sharpe": metrics["portfolio_sharpe"],
+                        "volatility": metrics["portfolio_volatility"],
+                        "annual_rebalance_cost": float(history["cost"].sum()) / max(len(equity) / 252, 1e-9),
+                    }
+                )
+
+    summary = pd.DataFrame(rows)
+    summary.to_csv(output_dir / "portfolio_summary.csv", index=False)
+    pd.DataFrame(curves).to_csv(output_dir / "portfolio_equity.csv")
+    for period, group in summary.groupby("period", sort=False):
+        print(f"\n== {period} ({base} base)")
+        print(
+            group[["scenario", "cagr", "max_drawdown", "sharpe", "volatility"]].to_string(
+                index=False,
+                formatters={
+                    "cagr": "{:.1%}".format,
+                    "max_drawdown": "{:.1%}".format,
+                    "volatility": "{:.1%}".format,
+                    "sharpe": "{:.2f}".format,
+                },
+            )
+        )
+    print(f"\nSaved: {output_dir / 'portfolio_summary.csv'}")
 
 
 def _add_common_args(parser: argparse.ArgumentParser) -> None:

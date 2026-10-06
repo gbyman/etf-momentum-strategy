@@ -6,6 +6,7 @@
     "USD": "KRW=X"
   },
   "cash_ticker": "153130.KS",
+  "calendar_ticker": "069500.KS",
   "borrow_rate": 0.07,
   "rebalance_cost_bps": 5,
   "periods": [

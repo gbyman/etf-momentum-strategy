@@ -22,7 +22,7 @@ from etf_momentum.data import (
     staleness_message,
     unique_tickers,
 )
-from etf_momentum.portfolio import PortfolioConfig, align_sleeves, annualized_cost, curve_to_returns, run_portfolio, to_base_currency
+from etf_momentum.portfolio import PortfolioConfig, annualized_cost, run_portfolio, sleeve_returns_on_calendar
 from etf_momentum.reporting import ensure_output_dir, save_equity_chart, save_json, save_run_metadata
 from etf_momentum.signals import LIQUIDITY_MAX_STALE_DAYS, RANK_BY_CHOICES, MomentumConfig, rank_momentum
 from etf_momentum.walkforward import METRICS, oos_equity, walk_forward
@@ -609,7 +609,8 @@ def run_walkforward_command(args: argparse.Namespace) -> None:
 
 
 PORTFOLIO_EXECUTION = (
-    "Sleeves are valued in the base currency at each day's close (foreign sleeves converted with same-day FX). "
+    "Evaluated on the calendar_ticker's trading days. same_day sleeves use that day's close; previous_close "
+    "sleeves (foreign markets) use the latest close and FX dated before that day, as known at its close. "
     "Target weights are set at the close of the first common date and of each month's last trading day; "
     "rebalance costs are charged on the notional traded between sleeves. Sleeve curves carry their own "
     "execution assumptions (see their run_config files)."
@@ -639,8 +640,11 @@ def run_portfolio_command(args: argparse.Namespace) -> None:
     fx_tickers: dict[str, str] = spec.get("fx", {})
     base = spec.get("base_currency", "KRW")
     cash_ticker = spec.get("cash_ticker")
+    calendar_ticker = spec.get("calendar_ticker")
+    if not calendar_ticker:
+        raise SystemExit("Portfolio spec needs a calendar_ticker (e.g. 069500.KS) that defines the evaluation days")
 
-    tickers = {sleeve["ticker"] for sleeve in sleeves_spec.values() if "ticker" in sleeve}
+    tickers = {sleeve["ticker"] for sleeve in sleeves_spec.values() if "ticker" in sleeve} | {calendar_ticker}
     tickers |= {fx_tickers[sleeve["currency"]] for sleeve in sleeves_spec.values() if sleeve["currency"] != base}
     if cash_ticker:
         tickers.add(cash_ticker)
@@ -651,19 +655,32 @@ def run_portfolio_command(args: argparse.Namespace) -> None:
     if spec.get("end") is None and (message := staleness_message(prices)):
         print(f"WARNING: {message}")
 
+    def own_dates(ticker: str) -> pd.Series:
+        # Downloaded alone, so the series keeps only its own trading days. In the combined frame
+        # every ticker is forward-filled onto the other markets' days (e.g. US days on Korean holidays).
+        return download_prices([ticker], start=spec.get("start"), end=spec.get("end"), cache_dir=args.cache_dir)[ticker]
+
+    calendar = pd.DatetimeIndex(own_dates(calendar_ticker).dropna().index)
+    print(f"Evaluation calendar: {calendar_ticker} trading days, {calendar[0].date()} ~ {calendar[-1].date()}")
     sleeve_returns: dict[str, pd.Series] = {}
     inputs: dict[str, dict[str, object]] = {}
     for name, sleeve in sleeves_spec.items():
         if "ticker" in sleeve:
-            curve = prices[sleeve["ticker"]]
+            curve = own_dates(sleeve["ticker"]).rename(name)
         else:
             path = Path(sleeve["equity_csv"])
-            curve = pd.read_csv(path, index_col=0, parse_dates=True)[sleeve.get("column", "strategy")]
+            curve = pd.read_csv(path, index_col=0, parse_dates=True)[sleeve.get("column", "strategy")].rename(name)
             inputs[name] = _input_file_record(path)
-        series = curve_to_returns(curve)
-        fx = prices[fx_tickers[sleeve["currency"]]].dropna() if sleeve["currency"] != base else None
-        sleeve_returns[name] = to_base_currency(series, fx)
-        print(f"Sleeve {name}: {series.index[0].date()} ~ {series.index[-1].date()}")
+        foreign = sleeve["currency"] != base
+        timing = sleeve.get("timing", "previous_close" if foreign else "same_day")
+        fx = own_dates(fx_tickers[sleeve["currency"]]) if foreign else None
+        try:
+            returns_on_calendar = sleeve_returns_on_calendar(curve, calendar, timing, fx=fx)
+        except ValueError as exc:
+            raise SystemExit(f"Sleeve {name}: {exc}") from exc
+        sleeve_returns[name] = returns_on_calendar
+        valid = returns_on_calendar.dropna()
+        print(f"Sleeve {name} ({timing}): {valid.index[0].date()} ~ {valid.index[-1].date()}")
     save_run_metadata(
         output_dir,
         args,
@@ -675,8 +692,8 @@ def run_portfolio_command(args: argparse.Namespace) -> None:
         },
         execution=PORTFOLIO_EXECUTION,
     )
-    returns = align_sleeves(sleeve_returns)
-    cash_returns = prices[cash_ticker].pct_change() if cash_ticker else None
+    returns = pd.DataFrame(sleeve_returns)
+    cash_returns = prices[cash_ticker].reindex(calendar).ffill().pct_change() if cash_ticker else None
 
     curves: dict[str, pd.Series] = {}
     rows: list[dict[str, object]] = []
@@ -860,10 +877,18 @@ def _safe_tickers(members: list, args: argparse.Namespace) -> tuple[str, ...]:
     """Universe members marked risk_asset=0. With a risky-asset cap, the cash ETF must be one of them
     when it is in the universe (otherwise the 'safe' remainder would itself be a risk asset)."""
     safe = tuple(m.ticker for m in members if not m.risk_asset)
+    capped = _max_risky_weight(args) < 1.0 or args.account == "retirement"
+    if not capped or not args.cash:
+        return safe
     cash = next((m for m in members if m.ticker == args.cash), None)
-    if _max_risky_weight(args) < 1.0 and cash is not None and cash.risk_asset:
+    if cash is None:
+        raise SystemExit(
+            f"--cash {args.cash} is not an enabled member of the universe, so it can't be checked as a safe, "
+            "account-eligible asset; add it with risk_asset=0"
+        )
+    if cash.risk_asset:
         raise SystemExit(f"--cash {args.cash} is marked risk_asset=1; a risky-asset cap needs a safe cash ETF")
-    if args.account == "retirement" and cash is not None and not cash.retirement_ok:
+    if args.account == "retirement" and not cash.retirement_ok:
         raise SystemExit(f"--cash {args.cash} is not allowed in retirement accounts (retirement_ok=0)")
     return safe
 

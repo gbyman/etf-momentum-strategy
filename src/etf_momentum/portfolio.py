@@ -42,6 +42,74 @@ def align_sleeves(sleeves: Mapping[str, pd.Series]) -> pd.DataFrame:
     return frame.where(~active, frame.fillna(0.0))
 
 
+TIMINGS = ("same_day", "previous_close")
+
+
+def sleeve_returns_on_calendar(
+    curve: pd.Series,
+    calendar: pd.DatetimeIndex,
+    timing: str,
+    fx: pd.Series | None = None,
+    max_stale_days: int = 5,
+) -> pd.Series:
+    """Daily returns of a value curve on a fixed evaluation calendar (e.g. Korean trading days).
+
+    same_day: the curve trades on this calendar. Every calendar date between its first and last
+      value must be present and non-NaN; a gap is an error, because a missing observation and an
+      exchange holiday can't be told apart.
+    previous_close: the curve trades elsewhere (e.g. a US ETF held through a KR-listed fund). Each
+      calendar date uses the latest curve value and FX dated strictly before it, which is what is
+      known at that date's close. Dates more than `max_stale_days` after the last observation are NaN.
+
+    `fx` converts to the base currency (base units per curve unit). The first valued date is a 0.0
+    base row; dates before it or after the sleeve ends are NaN.
+    """
+    if timing not in TIMINGS:
+        raise ValueError(f"Unsupported timing: {timing}; choose from {', '.join(TIMINGS)}")
+    calendar = pd.DatetimeIndex(calendar).sort_values()
+    if timing == "same_day":
+        values = _same_day_values(curve, calendar)
+        if fx is not None:
+            values = values * _asof_values(fx, calendar, strictly_before=False, max_stale_days=max_stale_days)
+    else:
+        values = _asof_values(curve, calendar, strictly_before=True, max_stale_days=max_stale_days)
+        if fx is not None:
+            values = values * _asof_values(fx, calendar, strictly_before=True, max_stale_days=max_stale_days)
+    returns = values.pct_change(fill_method=None)
+    first = values.first_valid_index()
+    if first is not None:
+        returns.loc[first] = 0.0
+    return returns.rename(curve.name)
+
+
+def _same_day_values(curve: pd.Series, calendar: pd.DatetimeIndex) -> pd.Series:
+    valid = curve.dropna()
+    if valid.empty:
+        raise ValueError(f"Sleeve {curve.name!r} has no values")
+    inside = curve.loc[valid.index[0] : valid.index[-1]]
+    if inside.isna().any():
+        raise ValueError(f"Sleeve {curve.name!r} has NaN values inside its range, first at {inside[inside.isna()].index[0].date()}")
+    span = calendar[(calendar >= valid.index[0]) & (calendar <= valid.index[-1])]
+    missing = span.difference(valid.index)
+    if len(missing):
+        raise ValueError(
+            f"Sleeve {curve.name!r} is missing {len(missing)} calendar date(s), first {missing[0].date()}; "
+            "check the input file or use a calendar the sleeve trades on"
+        )
+    return valid.reindex(calendar)
+
+
+def _asof_values(series: pd.Series, calendar: pd.DatetimeIndex, strictly_before: bool, max_stale_days: int) -> pd.Series:
+    known = series.dropna().sort_index()
+    lookup = calendar - pd.Timedelta(days=1) if strictly_before else calendar
+    positions = known.index.searchsorted(lookup, side="right") - 1
+    values = np.where(positions >= 0, known.to_numpy()[np.clip(positions, 0, None)], np.nan)
+    observed = known.index[np.clip(positions, 0, None)]
+    stale = (calendar - observed).days > max_stale_days + (1 if strictly_before else 0)
+    values = np.where((positions >= 0) & ~stale, values, np.nan)
+    return pd.Series(values, index=calendar, dtype=float)
+
+
 def curve_to_returns(curve: pd.Series) -> pd.Series:
     """Daily returns of a value curve, keeping its first date as a 0.0 row.
 
@@ -75,8 +143,8 @@ def run_portfolio(
 
     names = list(config.weights)
     data = returns[names].dropna()  # start once every sleeve has data
-    if data.empty:
-        raise ValueError("Sleeves have no overlapping dates")
+    if len(data) < 2:
+        raise ValueError(f"Sleeves need at least two common dates to evaluate, got {len(data)}")
     cash = (cash_returns.reindex(data.index).fillna(0.0) if cash_returns is not None else pd.Series(0.0, index=data.index))
     target = np.array([config.weights[name] for name in names])
     rebalance_days = set(data.index.to_series().groupby(data.index.to_period("M")).max()) | {data.index[0]}

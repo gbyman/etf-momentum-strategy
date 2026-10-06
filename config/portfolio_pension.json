@@ -1,0 +1,18 @@
+{
+  "base_currency": "KRW", "start": "2010-01-01", "fx": {"USD": "KRW=X"}, "cash_ticker": "153130.KS",
+  "borrow_rate": 0.07, "rebalance_cost_bps": 5,
+  "periods": [["2016-03-03", "2025-02-28"], ["2016-03-03", null]],
+  "sleeves": {
+    "SP500": {"ticker": "SPY", "currency": "USD"},
+    "PEN_mom": {"equity_csv": "results/walkforward/kr_pension_pension_10eok_10bp_robustgrid_tvoff/walkforward_equity.csv", "column": "walk_forward", "currency": "KRW"},
+    "PEN_mom_tv15": {"equity_csv": "results/walkforward/kr_pension_pension_10eok_10bp_robustgrid_tv15/walkforward_equity.csv", "column": "walk_forward", "currency": "KRW"}
+  },
+  "scenarios": [
+    {"name": "S&P500 100", "weights": {"SP500": 1.0}},
+    {"name": "PEN_mom 100", "weights": {"PEN_mom": 1.0}},
+    {"name": "S&P500 30 / PEN_mom 70", "weights": {"SP500": 0.3, "PEN_mom": 0.7}},
+    {"name": "S&P500 50 / PEN_mom 50", "weights": {"SP500": 0.5, "PEN_mom": 0.5}},
+    {"name": "S&P500 70 / PEN_mom 30", "weights": {"SP500": 0.7, "PEN_mom": 0.3}},
+    {"name": "S&P500 50 / PEN_mom_tv15 50", "weights": {"SP500": 0.5, "PEN_mom_tv15": 0.5}}
+  ]
+}

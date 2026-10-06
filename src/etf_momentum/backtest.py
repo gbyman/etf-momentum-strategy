@@ -40,6 +40,9 @@ class BacktestConfig:
     # Maximum total weight in non-cash holdings (retirement accounts: 0.7). The rest goes to the cash
     # ETF, which must then be a safe asset such as a short-term bond ETF.
     max_risky_weight: float = 1.0
+    # Tickers that are safe assets (universe risk_asset=0) besides the cash ETF; they don't count
+    # toward max_risky_weight. The cap is applied at each rebalance; prices can drift above it in between.
+    safe_tickers: tuple[str, ...] = ()
     # Market filter tickers for risk_on_benchmark (default: the benchmark). Risk-on when ANY of them
     # closes above its SMA, e.g. ("069500.KS", "360750.KS") stays invested if Korea or the US is trending up.
     risk_on_tickers: tuple[str, ...] | None = None
@@ -167,7 +170,8 @@ def _above_sma(history: pd.Series, window: int) -> bool:
 
 
 def _apply_risky_cap(weights: pd.Series, config: BacktestConfig) -> pd.Series:
-    risky = weights[(weights > 0) & (weights.index != config.cash_ticker)]
+    safe = set(config.safe_tickers) | {config.cash_ticker}
+    risky = weights[(weights > 0) & ~weights.index.isin(list(safe))]
     total = float(risky.sum())
     if total <= config.max_risky_weight + 1e-12:
         return weights

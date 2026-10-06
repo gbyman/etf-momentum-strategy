@@ -70,6 +70,14 @@ def walk_forward(
     return oos.rename("walk_forward"), pd.DataFrame(rows)
 
 
+def oos_equity(returns: pd.DataFrame, base_date: pd.Timestamp) -> pd.DataFrame:
+    """Growth curves of daily returns, with a 1.0 row at `base_date` (the close before the first
+    out-of-sample day) so the first out-of-sample return is part of every metric computed from it."""
+    equity = (1 + returns).cumprod()
+    base = pd.DataFrame(1.0, index=pd.DatetimeIndex([base_date]), columns=returns.columns)
+    return pd.concat([base, equity])
+
+
 def score(daily_returns: pd.Series, metric: str) -> float:
     """Training score. With zero drawdown (calmar) or zero volatility (sharpe) the ratio is
     +inf for gains and 0 for a flat series, so risk-free winners are preferred, never dropped."""
@@ -87,7 +95,8 @@ def score(daily_returns: pd.Series, metric: str) -> float:
             return mean / std * np.sqrt(TRADING_DAYS_PER_YEAR)
         return float(np.sign(mean) * np.inf) if mean else 0.0
     curve = (1 + daily_returns).cumprod()
-    max_drawdown = float((curve / curve.cummax() - 1).min())
+    peak = curve.cummax().clip(lower=1.0)  # the starting value 1.0 counts as a peak
+    max_drawdown = float((curve / peak - 1).min())
     if max_drawdown < 0:
         return cagr / abs(max_drawdown)
     return np.inf if cagr > 0 else 0.0

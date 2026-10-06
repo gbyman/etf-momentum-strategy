@@ -84,12 +84,21 @@ def account_candidates(
     return tuple(m.ticker for m in members if m.ticker not in {benchmark, cash} and allowed(m))
 
 
+def _asof_previous_day(series: pd.Series, index: pd.DatetimeIndex) -> pd.Series:
+    """For each date in `index`, the last observation of `series` dated strictly before it."""
+    known = series.dropna().sort_index()
+    values = known.reindex(index - pd.Timedelta(days=1), method="ffill")
+    return pd.Series(values.to_numpy(), index=index)
+
+
 def splice_proxies(
     frame: pd.DataFrame, proxies: dict[str, pd.Series], fx: pd.Series | None, scale: bool = True
 ) -> tuple[pd.DataFrame, dict[str, pd.Timestamp]]:
     """Fill each ticker's pre-listing rows with its proxy series converted by `fx` (local units per proxy unit).
 
-    The proxy is aligned to the local calendar (carried forward over its holidays). With `scale`
+    Each local date uses the latest proxy and FX observation from a strictly earlier calendar date:
+    a US close for day D is only known after the Korean close on day D, so using it would look
+    ahead. This as-of rule is holiday-safe on both calendars. With `scale`
     (prices) it is rescaled to meet the real series on the first listed day; without it (traded
     value) it is only currency-converted. Returns the new frame and each ticker's first real date.
     """
@@ -99,9 +108,9 @@ def splice_proxies(
         if ticker not in out.columns or out[ticker].dropna().empty:
             continue
         first = out[ticker].first_valid_index()
-        aligned = proxy.reindex(proxy.index.union(out.index)).ffill().reindex(out.index)
+        aligned = _asof_previous_day(proxy, out.index)
         if fx is not None:
-            aligned = aligned * fx.reindex(fx.index.union(out.index)).ffill().reindex(out.index)
+            aligned = aligned * _asof_previous_day(fx, out.index)
         if scale:
             if not np.isfinite(aligned.loc[first]) or aligned.loc[first] <= 0:
                 continue

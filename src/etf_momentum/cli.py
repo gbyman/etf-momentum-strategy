@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import itertools
 import json
 from dataclasses import replace
@@ -21,10 +22,10 @@ from etf_momentum.data import (
     staleness_message,
     unique_tickers,
 )
-from etf_momentum.portfolio import PortfolioConfig, align_sleeves, run_portfolio, to_base_currency
+from etf_momentum.portfolio import PortfolioConfig, align_sleeves, annualized_cost, curve_to_returns, run_portfolio, to_base_currency
 from etf_momentum.reporting import ensure_output_dir, save_equity_chart, save_json, save_run_metadata
 from etf_momentum.signals import LIQUIDITY_MAX_STALE_DAYS, RANK_BY_CHOICES, MomentumConfig, rank_momentum
-from etf_momentum.walkforward import METRICS, walk_forward
+from etf_momentum.walkforward import METRICS, oos_equity, walk_forward
 from etf_momentum.weekly import append_snapshot, build_weekly_report, load_previous_snapshot
 
 
@@ -293,6 +294,7 @@ def run_backtest_command(args: argparse.Namespace) -> None:
         accounting=args.accounting,
         target_volatility=args.target_vol,
         max_risky_weight=_max_risky_weight(args),
+        safe_tickers=_safe_tickers(members, args),
         risk_on_tickers=_risk_on_tickers(args),
         top_n=args.top_n,
         rebalance=args.rebalance,
@@ -370,6 +372,7 @@ def run_compare_command(args: argparse.Namespace) -> None:
                                 accounting=args.accounting,
                                 target_volatility=args.target_vol,
                                 max_risky_weight=_max_risky_weight(args),
+                                safe_tickers=_safe_tickers(members, args),
                                 risk_on_tickers=_risk_on_tickers(args),
                                 top_n=top_n,
                                 rebalance=rebalance,
@@ -499,6 +502,7 @@ def run_walkforward_command(args: argparse.Namespace) -> None:
             accounting=args.accounting,
             target_volatility=args.target_vol,
             max_risky_weight=_max_risky_weight(args),
+            safe_tickers=_safe_tickers(members, args),
             risk_on_tickers=_risk_on_tickers(args),
             top_n=top_n,
             rebalance=rebalance,
@@ -572,7 +576,7 @@ def run_walkforward_command(args: argparse.Namespace) -> None:
             "hindsight_best": fixed[hindsight_label],
         }
     )
-    equity = (1 + curves).cumprod()
+    equity = oos_equity(curves, windows["train_end"].iloc[0])
     risk_free = prices[args.cash].pct_change() if args.cash else None
     metrics = summarize_performance(equity, risk_free=risk_free)
     grid_summary = pd.DataFrame(
@@ -604,6 +608,30 @@ def run_walkforward_command(args: argparse.Namespace) -> None:
     print(f"\nSaved: {output_dir / 'walkforward_windows.csv'}")
 
 
+PORTFOLIO_EXECUTION = (
+    "Sleeves are valued in the base currency at each day's close (foreign sleeves converted with same-day FX). "
+    "Target weights are set at the close of the first common date and of each month's last trading day; "
+    "rebalance costs are charged on the notional traded between sleeves. Sleeve curves carry their own "
+    "execution assumptions (see their run_config files)."
+)
+
+
+def _input_file_record(path: Path) -> dict[str, object]:
+    """Hash, date range and producing run (if a run_config sits next to it) of a sleeve input file."""
+    frame = pd.read_csv(path, index_col=0, parse_dates=True)
+    record: dict[str, object] = {
+        "path": str(path),
+        "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+        "first_date": str(frame.index[0].date()),
+        "last_date": str(frame.index[-1].date()),
+    }
+    run_config = next(iter(sorted(path.parent.glob("*_run_config.json"))), None)
+    if run_config is not None:
+        produced_by = json.loads(run_config.read_text(encoding="utf-8"))
+        record["produced_by"] = {k: produced_by.get(k) for k in ("command", "run_at", "code_revision", "arguments")}
+    return record
+
+
 def run_portfolio_command(args: argparse.Namespace) -> None:
     output_dir = ensure_output_dir(args.output_dir)
     spec = json.loads(Path(args.spec).read_text(encoding="utf-8"))
@@ -616,21 +644,37 @@ def run_portfolio_command(args: argparse.Namespace) -> None:
     tickers |= {fx_tickers[sleeve["currency"]] for sleeve in sleeves_spec.values() if sleeve["currency"] != base}
     if cash_ticker:
         tickers.add(cash_ticker)
-    prices = download_prices(sorted(tickers), start=spec.get("start"), cache_dir=args.cache_dir, refresh=args.refresh)
+    prices = download_prices(
+        sorted(tickers), start=spec.get("start"), end=spec.get("end"), cache_dir=args.cache_dir, refresh=args.refresh
+    )
     print(f"Price data as of {pd.Timestamp(prices.index[-1]).date()}")
-    if message := staleness_message(prices):
+    if spec.get("end") is None and (message := staleness_message(prices)):
         print(f"WARNING: {message}")
-    save_run_metadata(output_dir, args, prices)
 
     sleeve_returns: dict[str, pd.Series] = {}
+    inputs: dict[str, dict[str, object]] = {}
     for name, sleeve in sleeves_spec.items():
         if "ticker" in sleeve:
-            series = prices[sleeve["ticker"]].dropna().pct_change().dropna()
+            curve = prices[sleeve["ticker"]]
         else:
-            curve = pd.read_csv(sleeve["equity_csv"], index_col=0, parse_dates=True)[sleeve.get("column", "strategy")]
-            series = curve.dropna().pct_change().dropna()
+            path = Path(sleeve["equity_csv"])
+            curve = pd.read_csv(path, index_col=0, parse_dates=True)[sleeve.get("column", "strategy")]
+            inputs[name] = _input_file_record(path)
+        series = curve_to_returns(curve)
         fx = prices[fx_tickers[sleeve["currency"]]].dropna() if sleeve["currency"] != base else None
         sleeve_returns[name] = to_base_currency(series, fx)
+        print(f"Sleeve {name}: {series.index[0].date()} ~ {series.index[-1].date()}")
+    save_run_metadata(
+        output_dir,
+        args,
+        prices,
+        extra={
+            "spec": spec,
+            "spec_sha256": hashlib.sha256(Path(args.spec).read_bytes()).hexdigest(),
+            "sleeve_inputs": inputs,
+        },
+        execution=PORTFOLIO_EXECUTION,
+    )
     returns = align_sleeves(sleeve_returns)
     cash_returns = prices[cash_ticker].pct_change() if cash_ticker else None
 
@@ -650,6 +694,8 @@ def run_portfolio_command(args: argparse.Namespace) -> None:
             curves[name] = equity
             for start, end in spec.get("periods", [[None, None]]):
                 window = equity.loc[start:end]
+                if window.empty:
+                    continue
                 metrics = summarize_performance((window / window.iloc[0]).to_frame("portfolio"), risk_free=cash_returns)
                 rows.append(
                     {
@@ -661,7 +707,7 @@ def run_portfolio_command(args: argparse.Namespace) -> None:
                         "max_drawdown": metrics["portfolio_max_drawdown"],
                         "sharpe": metrics["portfolio_sharpe"],
                         "volatility": metrics["portfolio_volatility"],
-                        "annual_rebalance_cost": float(history["cost"].sum()) / max(len(equity) / 252, 1e-9),
+                        "annual_rebalance_cost": annualized_cost(history, window.index),
                     }
                 )
 
@@ -808,6 +854,18 @@ def _candidates(members: list, args: argparse.Namespace) -> tuple[str, ...]:
 
 def _risk_on_tickers(args: argparse.Namespace) -> tuple[str, ...] | None:
     return tuple(_parse_str_list(args.risk_on_ticker)) if getattr(args, "risk_on_ticker", None) else None
+
+
+def _safe_tickers(members: list, args: argparse.Namespace) -> tuple[str, ...]:
+    """Universe members marked risk_asset=0. With a risky-asset cap, the cash ETF must be one of them
+    when it is in the universe (otherwise the 'safe' remainder would itself be a risk asset)."""
+    safe = tuple(m.ticker for m in members if not m.risk_asset)
+    cash = next((m for m in members if m.ticker == args.cash), None)
+    if _max_risky_weight(args) < 1.0 and cash is not None and cash.risk_asset:
+        raise SystemExit(f"--cash {args.cash} is marked risk_asset=1; a risky-asset cap needs a safe cash ETF")
+    if args.account == "retirement" and cash is not None and not cash.retirement_ok:
+        raise SystemExit(f"--cash {args.cash} is not allowed in retirement accounts (retirement_ok=0)")
+    return safe
 
 
 def _max_risky_weight(args: argparse.Namespace) -> float:

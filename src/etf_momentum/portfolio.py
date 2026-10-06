@@ -34,11 +34,31 @@ def to_base_currency(returns: pd.Series, fx: pd.Series | None) -> pd.Series:
 def align_sleeves(sleeves: Mapping[str, pd.Series]) -> pd.DataFrame:
     """Put sleeves on the union calendar; a sleeve's non-trading day is a zero-return day.
 
-    Rows before a sleeve's first observation stay NaN so the portfolio can start once all exist.
+    Rows before a sleeve's first or after its last observation stay NaN, so the portfolio only runs
+    while every sleeve has data (an ended strategy curve is not extended with zero returns).
     """
     frame = pd.DataFrame(dict(sleeves)).sort_index()
-    started = frame.notna().cummax()
-    return frame.where(~started, frame.fillna(0.0))
+    active = frame.notna().cummax() & frame.notna()[::-1].cummax()[::-1]
+    return frame.where(~active, frame.fillna(0.0))
+
+
+def curve_to_returns(curve: pd.Series) -> pd.Series:
+    """Daily returns of a value curve, keeping its first date as a 0.0 row.
+
+    That row is the base date: run_portfolio allocates at its close, so the curve's first real
+    return (the next row) is earned rather than skipped.
+    """
+    curve = curve.dropna()
+    return curve.pct_change().fillna(0.0)
+
+
+def annualized_cost(history: pd.DataFrame, window: pd.DatetimeIndex) -> float:
+    """Rebalance costs paid inside `window`, per calendar year of the window."""
+    if history.empty or len(window) < 2:
+        return 0.0
+    inside = history[(history["date"] >= window[0]) & (history["date"] <= window[-1])]
+    years = max((window[-1] - window[0]).days / 365.25, 1e-9)
+    return float(inside["cost"].sum()) / years
 
 
 def run_portfolio(

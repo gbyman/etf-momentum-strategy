@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -30,8 +31,14 @@ def save_run_metadata(
     args: argparse.Namespace,
     prices: pd.DataFrame,
     traded_value: pd.DataFrame | None = None,
+    extra: dict[str, object] | None = None,
+    execution: str | None = None,
 ) -> Path:
-    """Write <command>_run_config.json so a result file can be traced back to how it was produced."""
+    """Write <command>_run_config.json so a result file can be traced back to how it was produced.
+
+    `extra` adds command-specific inputs (e.g. a portfolio spec and its input files); `execution`
+    replaces the default momentum execution note for commands that trade differently.
+    """
     arguments = {key: value for key, value in vars(args).items() if key != "func"}
     universe = Path(str(arguments.get("universe", "")))
     metadata = {
@@ -39,6 +46,7 @@ def save_run_metadata(
         "argv": sys.argv,
         "run_at": datetime.now().astimezone().isoformat(timespec="seconds"),
         "package_version": __version__,
+        "code_revision": _code_revision(),
         "arguments": arguments,
         "universe_sha256": hashlib.sha256(universe.read_bytes()).hexdigest() if universe.is_file() else None,
         "price_data": {
@@ -47,11 +55,23 @@ def save_run_metadata(
             "tickers": list(prices.columns),
         },
         "traded_value_data": _traded_value_section(prices, traded_value),
-        "execution": EXECUTION_ASSUMPTION,
+        "execution": execution or EXECUTION_ASSUMPTION,
+        **(extra or {}),
     }
     path = Path(output_dir) / f"{metadata['command']}_run_config.json"
     path.write_text(json.dumps(metadata, indent=2, default=str, ensure_ascii=False), encoding="utf-8")
     return path
+
+
+def _code_revision() -> dict[str, object] | None:
+    """Git commit of the package source and whether the working tree had uncommitted changes."""
+    root = Path(__file__).resolve().parent
+    try:
+        commit = subprocess.run(["git", "rev-parse", "HEAD"], cwd=root, capture_output=True, text=True, check=True)
+        status = subprocess.run(["git", "status", "--porcelain"], cwd=root, capture_output=True, text=True, check=True)
+    except (OSError, subprocess.CalledProcessError):
+        return None
+    return {"commit": commit.stdout.strip(), "dirty": bool(status.stdout.strip())}
 
 
 def _traded_value_section(prices: pd.DataFrame, traded_value: pd.DataFrame | None) -> dict[str, object] | None:

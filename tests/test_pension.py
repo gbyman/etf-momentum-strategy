@@ -52,8 +52,9 @@ def test_splice_fills_pre_listing_history_from_fx_converted_proxy() -> None:
     spliced, starts = splice_proxies(local, {"360750.KS": proxy}, fx)
     assert starts == {"360750.KS": kr_days[4]}
     pd.testing.assert_series_equal(spliced["360750.KS"].iloc[4:], local["360750.KS"].iloc[4:])
-    pre = spliced["360750.KS"].iloc[:5]
-    proxy_krw = (proxy * fx).iloc[:5]
+    # each Korean day uses the previous US close and FX (known before the Korean close)
+    pre = spliced["360750.KS"].iloc[1:5]
+    proxy_krw = (proxy * fx).shift(1).iloc[1:5]
     pd.testing.assert_series_equal(pre / pre.iloc[-1], proxy_krw / proxy_krw.iloc[-1], check_names=False)
 
 
@@ -63,8 +64,9 @@ def test_splice_aligns_proxy_on_local_calendar() -> None:
     us_days = pd.to_datetime(["2020-01-02", "2020-01-06", "2020-01-07"])  # US closed on 01-03
     proxy = pd.Series([50.0, 51.0, 52.0], index=us_days)
     spliced, _ = splice_proxies(local, {"360750.KS": proxy}, pd.Series(1.0, index=kr_days))
-    assert spliced.loc["2020-01-03", "360750.KS"] == spliced.loc["2020-01-02", "360750.KS"]  # carried forward
-    assert not spliced["360750.KS"].isna().any()
+    # KR 01-03 and 01-06 both only know the US 01-02 close (US closed 01-03); KR 01-02 has no earlier US close
+    assert spliced.loc["2020-01-03", "360750.KS"] == spliced.loc["2020-01-06", "360750.KS"]
+    assert np.isnan(spliced.loc["2020-01-02", "360750.KS"])
 
 
 def risky_prices(days: int = 700) -> pd.DataFrame:

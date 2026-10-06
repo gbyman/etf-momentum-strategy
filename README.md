@@ -197,6 +197,27 @@ uv run etf-momentum backtest \
 - 변동성(`--volatility-window`, 기본 63일)을 계산할 수 없는 ETF는 후보에서 제외됩니다(`volatility_ok=False`). 백테스트 워밍업 기간에도 변동성 계산 기간이 포함됩니다.
 - `risk_adjusted_score`와 `inverse_vol` 비중은 연 변동성 5% 미만을 5%로 간주해 계산합니다. 변동성이 아주 낮은 채권 ETF나 부동소수점 오차가 극단적인 점수·비중을 만들지 않게 하기 위한 하한입니다. `realized_volatility` 컬럼에는 원래 값이 남습니다.
 
+## 성과 지표
+
+`summary.json`과 `comparison.csv`에 들어가는 주요 지표입니다. 모든 지표는 첫 리밸런싱일부터 측정합니다.
+
+```text
+<curve>_cagr              연평균 수익률
+<curve>_volatility        연환산 변동성
+<curve>_sharpe            (일간 수익률 - 무위험 수익률)의 평균 / 표준편차 × √252.
+                          무위험 수익률은 --cash ETF의 일간 수익률(없으면 0)
+<curve>_sharpe_like       CAGR / 변동성. 이전 결과와 비교용으로 남긴 값이며 일반적인 Sharpe가 아님
+<curve>_max_drawdown      최대 낙폭
+<curve>_calmar            CAGR / |최대 낙폭|
+<curve>_ending_value      기간 전체 성장 배수
+excess_cagr               전략 CAGR - 벤치마크 CAGR
+total_transaction_cost    리밸런싱마다 낸 거래비용(포트폴리오 대비 비율)의 합
+annual_transaction_cost   위 합계 / 기간(년)
+annual_turnover           리밸런싱 회전율의 연간 합계 (2.0 = 1년에 포트폴리오를 두 번 갈아치움)
+```
+
+`positions.csv`에는 리밸런싱별 `transaction_cost`가 기록됩니다. `walkforward`는 표에 Sharpe를 함께 보여주지만, 구간마다 파라미터가 바뀌므로 거래비용 합계는 따로 계산하지 않습니다.
+
 ## 백테스트 가정
 
 - 신호: 리밸런싱일 종가까지의 가격으로 계산합니다.

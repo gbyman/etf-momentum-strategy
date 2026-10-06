@@ -264,10 +264,7 @@ def run_backtest_command(args: argparse.Namespace) -> None:
 
     print("Performance summary")
     for key, value in metrics.items():
-        if "ending_value" in key:
-            print(f"  {key}: {value:.3f}")
-        else:
-            print(f"  {key}: {value:.2%}")
+        print(f"  {key}: {_format_metric(key, value)}")
     print(f"\nSaved results under: {output_dir}")
 
 
@@ -380,11 +377,19 @@ def run_compare_command(args: argparse.Namespace) -> None:
         "strategy_cagr",
         "strategy_max_drawdown",
         "strategy_calmar",
+        "strategy_sharpe",
         "benchmark_cagr",
+        "excess_cagr",
+        "annual_transaction_cost",
         "avg_turnover",
     ]
     existing_columns = [column for column in display_columns if column in comparison.columns]
-    print(comparison[existing_columns].head(15).to_string(index=False, float_format=lambda value: f"{value: .2%}"))
+    formatters = {
+        column: (lambda value, column=column: _format_metric(column, value))
+        for column in existing_columns
+        if pd.api.types.is_float_dtype(comparison[column])
+    }
+    print(comparison[existing_columns].head(15).to_string(index=False, formatters=formatters))
     print(f"\nSaved: {output_dir / 'comparison.csv'}")
 
 
@@ -494,7 +499,8 @@ def run_walkforward_command(args: argparse.Namespace) -> None:
         }
     )
     equity = (1 + curves).cumprod()
-    metrics = summarize_performance(equity)
+    risk_free = prices[args.cash].pct_change() if args.cash else None
+    metrics = summarize_performance(equity, risk_free=risk_free)
     grid_summary = pd.DataFrame(
         [{"label": label, **params[label], "oos_period_growth": float(fixed_growth[label])} for label in fixed.columns]
     ).sort_values("oos_period_growth", ascending=False)
@@ -505,11 +511,11 @@ def run_walkforward_command(args: argparse.Namespace) -> None:
     save_json(metrics, output_dir / "walkforward_summary.json")
 
     print(f"\nOut-of-sample period: {period[0].date()} to {period[-1].date()} ({len(windows)} windows)")
-    print(f"{'':16s}{'CAGR':>9s}{'MaxDD':>9s}{'Calmar':>9s}{'Vol':>9s}")
+    print(f"{'':16s}{'CAGR':>9s}{'MaxDD':>9s}{'Calmar':>9s}{'Sharpe':>9s}{'Vol':>9s}")
     for name in curves.columns:
         print(
             f"{name:16s}{metrics[name + '_cagr']:9.1%}{metrics[name + '_max_drawdown']:9.1%}"
-            f"{metrics[name + '_calmar']:9.2f}{metrics[name + '_volatility']:9.1%}"
+            f"{metrics[name + '_calmar']:9.2f}{metrics[name + '_sharpe']:9.2f}{metrics[name + '_volatility']:9.1%}"
         )
     print(f"\nWindows beating benchmark: {int(windows['beat_benchmark'].sum())}/{len(windows)}")
     print(f"Distinct parameter sets selected: {windows['selected'].nunique()} of {len(returns)}")
@@ -578,6 +584,16 @@ def _download(tickers: list[str], start: str | None, args: argparse.Namespace) -
     if args.end is None and (message := staleness_message(prices)):
         print(f"WARNING: {message}")
     return prices
+
+
+RATIO_METRIC_SUFFIXES = ("_sharpe", "_sharpe_like", "_calmar", "_ending_value")
+
+
+def _format_metric(key: str, value: float) -> str:
+    """Ratios (Sharpe, Calmar, growth multiple) as plain numbers; returns, drawdowns, costs as percentages."""
+    if pd.isna(value):
+        return "n/a"
+    return f"{value:.3f}" if key.endswith(RATIO_METRIC_SUFFIXES) else f"{value:.2%}"
 
 
 def _exit_if_empty(ranking: pd.DataFrame) -> None:

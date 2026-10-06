@@ -98,6 +98,7 @@ def run_backtest(
                 "weights": ",".join(f"{ticker}:{weights[ticker]:.4f}" for ticker in selected),
                 "turnover": turnover,
                 "traded_notional": traded_notional,
+                "transaction_cost": cost,
                 "eligible_count": int(ranking["eligible"].sum()) if not ranking.empty else 0,
                 "liquidity_excluded": _liquidity_excluded(ranking),
                 "held_avg_traded_value": _held_traded_value(ranking, selected),
@@ -117,7 +118,9 @@ def run_backtest(
     first_rebalance = positions[0]["rebalance_date"] if positions else equity.index[0]
     equity = equity.loc[first_rebalance:]
     equity = equity / equity.iloc[0]
-    metrics = summarize_performance(equity)
+    risk_free = returns[config.cash_ticker] if config.cash_ticker else None
+    metrics = summarize_performance(equity, risk_free=risk_free)
+    metrics.update(_trading_metrics(pd.DataFrame(positions), equity))
     return equity, pd.DataFrame(positions), metrics
 
 
@@ -149,7 +152,14 @@ def _holding_period(returns: pd.DataFrame, weights: pd.Series, accounting: str) 
     return period_returns, end_weights
 
 
-def summarize_performance(equity: pd.DataFrame) -> dict[str, float]:
+def summarize_performance(equity: pd.DataFrame, risk_free: pd.Series | None = None) -> dict[str, float]:
+    """Per-curve performance metrics.
+
+    `<curve>_sharpe` is the annualized mean daily return in excess of `risk_free` (daily returns, e.g. the
+    cash ETF; 0 when omitted) divided by its standard deviation. `<curve>_sharpe_like` is the older
+    CAGR / volatility ratio, kept for comparison with earlier results. `excess_cagr` is strategy minus
+    benchmark CAGR when both curves are present.
+    """
     out: dict[str, float] = {}
     for column in equity.columns:
         curve = equity[column].dropna()
@@ -160,17 +170,37 @@ def summarize_performance(equity: pd.DataFrame) -> dict[str, float]:
         growth = float(curve.iloc[-1] / curve.iloc[0])
         cagr = float(growth ** (1.0 / years) - 1.0)
         volatility = float(daily_returns.std() * np.sqrt(252)) if not daily_returns.empty else 0.0
-        sharpe = float(cagr / volatility) if volatility > 0 else np.nan
+        sharpe_like = float(cagr / volatility) if volatility > 0 else np.nan
+        rf = risk_free.reindex(daily_returns.index).fillna(0.0) if risk_free is not None else 0.0
+        excess = daily_returns - rf
+        excess_std = float(excess.std()) if len(excess) > 1 else 0.0
+        sharpe = float(excess.mean() / excess_std * np.sqrt(252)) if excess_std > 0 else np.nan
         drawdown = curve / curve.cummax() - 1.0
         max_drawdown = float(drawdown.min())
         calmar = float(cagr / abs(max_drawdown)) if max_drawdown < 0 else np.nan
         out[f"{column}_cagr"] = cagr
         out[f"{column}_volatility"] = volatility
-        out[f"{column}_sharpe_like"] = sharpe
+        out[f"{column}_sharpe"] = sharpe
+        out[f"{column}_sharpe_like"] = sharpe_like
         out[f"{column}_max_drawdown"] = max_drawdown
         out[f"{column}_calmar"] = calmar
         out[f"{column}_ending_value"] = growth
+    if "strategy_cagr" in out and "benchmark_cagr" in out:
+        out["excess_cagr"] = out["strategy_cagr"] - out["benchmark_cagr"]
     return out
+
+
+def _trading_metrics(positions: pd.DataFrame, equity: pd.DataFrame) -> dict[str, float]:
+    """Costs are fractions of portfolio value at each rebalance, summed (not compounded)."""
+    if positions.empty or equity.empty:
+        return {}
+    years = max((equity.index[-1] - equity.index[0]).days / 365.25, 1e-9)
+    total_cost = float(positions["transaction_cost"].sum())
+    return {
+        "total_transaction_cost": total_cost,
+        "annual_transaction_cost": total_cost / years,
+        "annual_turnover": float(positions["turnover"].sum()) / years,
+    }
 
 
 def _select_weights(

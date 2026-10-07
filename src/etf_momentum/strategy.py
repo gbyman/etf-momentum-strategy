@@ -86,7 +86,7 @@ def load_strategy(path: str | Path) -> Strategy:
     if not isinstance(raw["description"], str):
         fail("description", "must be a string")
     if not isinstance(raw["universe"], str) or not Path(raw["universe"]).is_file():
-        fail("universe", f"file not found: {raw['universe']} (paths are relative to the project root)")
+        fail("universe", f"file not found: {raw['universe']} (relative paths are resolved from the current directory, {Path.cwd()})")
     if raw["account"] not in ACCOUNT_CHOICES:
         fail("account", f"must be one of {', '.join(ACCOUNT_CHOICES)}")
     if not isinstance(raw["benchmark"], str) or not raw["benchmark"]:

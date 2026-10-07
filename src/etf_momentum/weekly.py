@@ -216,8 +216,8 @@ def load_strategy_snapshot(
     same = latest_day[latest_day["config_hash"] == config_hash]
     if not same.empty:
         return same.copy(), None
-    old_version = latest_day["version"].iloc[0]
-    return pd.DataFrame(), f"설정이 바뀌어(버전 {old_version}→{version}) 새 기준으로 시작합니다"
+    old_versions = ", ".join(str(v) for v in sorted({int(v) for v in latest_day["version"]}))
+    return pd.DataFrame(), f"설정이 바뀌어(버전 {old_versions}→{version}) 새 기준으로 시작합니다"
 
 
 def append_strategy_snapshot(history_path: str | Path, ranking: pd.DataFrame, version: int, config_hash: str) -> None:
@@ -246,4 +246,8 @@ def _read_strategy_history(path: Path) -> pd.DataFrame:
     missing = [c for c in ["as_of", "ticker", "rank", *STRATEGY_COLUMNS] if c not in history.columns]
     if missing:
         raise ValueError(f"{path} is missing columns {', '.join(missing)}; not overwriting it")
+    if history.empty:
+        history["as_of"] = pd.to_datetime(history["as_of"])
+    elif not pd.api.types.is_datetime64_any_dtype(history["as_of"]):
+        raise ValueError(f"{path} has as_of values that are not dates; not overwriting it")
     return history

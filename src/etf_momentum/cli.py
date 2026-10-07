@@ -7,7 +7,7 @@ import sys
 import itertools
 import json
 from dataclasses import replace
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 import numpy as np
@@ -277,27 +277,37 @@ def run_rank_command(args: argparse.Namespace) -> None:
 
 
 def _selection_today(args: argparse.Namespace) -> pd.Timestamp | None:
-    """With --end (exclusive download end), the previous month-end is judged as of that date."""
-    return pd.Timestamp(args.end) if args.end else None
+    """A past --end (exclusive download end) makes this a lookup as of that date; None means a live run.
+
+    --end today or later downloads up to the latest data anyway, so it is judged as of today."""
+    if not args.end:
+        return None
+    end = pd.Timestamp(args.end).normalize()
+    return end if end <= pd.Timestamp.today().normalize() else None
+
+
+def _signal_meta(selection: pd.DataFrame, prices: pd.DataFrame, args: argparse.Namespace, strategy: Strategy) -> dict[str, object]:
+    revision = _code_revision() or {}
+    dirty = revision.get("dirty")
+    return {
+        "signal_date": selection["as_of"].iloc[0],
+        "recorded_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+        "strategy_id": strategy.id,
+        "version": strategy.version,
+        "config_hash": strategy.config_hash,
+        "code_commit": revision.get("commit", ""),
+        "code_dirty": "" if dirty is None else str(bool(dirty)).lower(),
+        "price_last_date": str(pd.Timestamp(prices.index[-1]).date()),
+    }
 
 
 def _record_month_end_signal(
     output_dir: Path, strategy: Strategy, selection: pd.DataFrame, prices: pd.DataFrame, args: argparse.Namespace
 ) -> None:
-    if args.end:
+    if _selection_today(args) is not None:
         print("과거 기준일 조회라 신호를 기록하지 않습니다 (--end)")
         return
-    revision = _code_revision() or {}
-    meta = {
-        "signal_date": selection["as_of"].iloc[0],
-        "recorded_at": pd.Timestamp.now(tz="Asia/Seoul").isoformat(timespec="seconds"),
-        "strategy_id": strategy.id,
-        "version": strategy.version,
-        "config_hash": strategy.config_hash,
-        "code_commit": revision.get("commit", ""),
-        "code_dirty": revision.get("dirty", ""),
-        "price_last_date": str(pd.Timestamp(prices.index[-1]).date()),
-    }
+    meta = _signal_meta(selection, prices, args, strategy)
     path = output_dir / "strategies" / strategy.id / "signals.csv"
     try:
         result = record_signal(path, selection, meta)

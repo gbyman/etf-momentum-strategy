@@ -135,3 +135,11 @@ def test_rank_with_past_end_date_does_not_record(tmp_path, monkeypatch, offline,
     run(monkeypatch, "rank", "--strategy", strategy_file(tmp_path), "--end", "2026-09-15", "--output-dir", str(out))
     assert not (out / "strategies" / "test" / "signals.csv").exists()
     assert "기록하지 않습니다" in capsys.readouterr().out
+
+
+def test_weekly_with_strategy_writes_history_in_strategy_folder(tmp_path, monkeypatch, offline) -> None:
+    out = tmp_path / "out"
+    run(monkeypatch, "weekly", "--strategy", strategy_file(tmp_path), "--output-dir", str(out))
+    history = pd.read_csv(out / "strategies" / "test" / "weekly_history.csv")
+    assert {"version", "config_hash"} <= set(history.columns)
+    assert not (out / "rank_history.csv").exists()

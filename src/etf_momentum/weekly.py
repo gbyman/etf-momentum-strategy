@@ -199,3 +199,51 @@ def _finite_number(value: object) -> bool:
     except (TypeError, ValueError):
         return False
 
+
+STRATEGY_COLUMNS = ["version", "config_hash"]
+
+
+def load_strategy_snapshot(
+    history_path: str | Path, current_as_of: pd.Timestamp, config_hash: str, version: int
+) -> tuple[pd.DataFrame, str | None]:
+    """Most recent earlier snapshot of the same rule; if the most recent earlier day was taken under a
+    different rule, nothing to compare against and a notice saying so."""
+    history = _read_strategy_history(Path(history_path))
+    earlier = history[history["as_of"] < current_as_of]
+    if earlier.empty:
+        return pd.DataFrame(), None
+    latest_day = earlier[earlier["as_of"] == earlier["as_of"].max()]
+    same = latest_day[latest_day["config_hash"] == config_hash]
+    if not same.empty:
+        return same.copy(), None
+    old_version = latest_day["version"].iloc[0]
+    return pd.DataFrame(), f"설정이 바뀌어(버전 {old_version}→{version}) 새 기준으로 시작합니다"
+
+
+def append_strategy_snapshot(history_path: str | Path, ranking: pd.DataFrame, version: int, config_hash: str) -> None:
+    """Add today's snapshot for this rule; a rerun on the same day replaces only this rule's rows."""
+    path = Path(history_path)
+    snapshot = ranking[[c for c in SNAPSHOT_COLUMNS if c in ranking.columns]].copy()
+    if snapshot.empty:
+        return
+    snapshot["version"] = version
+    snapshot["config_hash"] = config_hash
+    history = _read_strategy_history(path)
+    as_of = pd.Timestamp(snapshot["as_of"].iloc[0])
+    history = history[~((history["as_of"] == as_of) & (history["config_hash"] == config_hash))]
+    combined = pd.concat([history, snapshot], ignore_index=True).sort_values(["as_of", "config_hash", "rank"])
+    path.parent.mkdir(parents=True, exist_ok=True)
+    combined.to_csv(path, index=False)
+
+
+def _read_strategy_history(path: Path) -> pd.DataFrame:
+    if not path.exists():
+        return pd.DataFrame(columns=["as_of", "ticker", "rank", *STRATEGY_COLUMNS])
+    try:
+        history = pd.read_csv(path, parse_dates=["as_of"], dtype={"config_hash": str})
+    except (OSError, ValueError, pd.errors.ParserError) as exc:
+        raise ValueError(f"Can't read {path}; not overwriting it ({exc})") from exc
+    missing = [c for c in ["as_of", "ticker", "rank", *STRATEGY_COLUMNS] if c not in history.columns]
+    if missing:
+        raise ValueError(f"{path} is missing columns {', '.join(missing)}; not overwriting it")
+    return history

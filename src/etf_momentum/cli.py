@@ -37,7 +37,7 @@ from etf_momentum.reporting import _code_revision, ensure_output_dir, save_equit
 from etf_momentum.strategy import Strategy, StrategyError, load_strategy
 from etf_momentum.signals import LIQUIDITY_MAX_STALE_DAYS, RANK_BY_CHOICES, MomentumConfig, rank_momentum
 from etf_momentum.walkforward import METRICS, oos_equity, walk_forward
-from etf_momentum.weekly import append_snapshot, build_weekly_report, load_previous_snapshot
+from etf_momentum.weekly import append_snapshot, append_strategy_snapshot, build_weekly_report, load_previous_snapshot, load_strategy_snapshot
 
 
 STRATEGY_CONFLICTS = (
@@ -378,8 +378,18 @@ def run_weekly_command(args: argparse.Namespace) -> None:
     ranking.to_csv(output_dir / "latest_ranking.csv", index=False)
 
     current_as_of = pd.Timestamp(ranking["as_of"].iloc[0])
-    history_path = Path(args.history_file) if args.history_file else output_dir / "rank_history.csv"
-    previous = load_previous_snapshot(history_path, current_as_of)
+    strategy = getattr(args, "strategy_info", None)
+    if strategy is not None:
+        history_path = output_dir / "strategies" / strategy.id / "weekly_history.csv"
+        try:
+            previous, notice = load_strategy_snapshot(history_path, current_as_of, strategy.config_hash, strategy.version)
+        except ValueError as exc:
+            raise SystemExit(str(exc)) from exc
+        if notice:
+            print(notice)
+    else:
+        history_path = Path(args.history_file) if args.history_file else output_dir / "rank_history.csv"
+        previous = load_previous_snapshot(history_path, current_as_of)
     report = build_weekly_report(
         ranking,
         previous,
@@ -390,7 +400,13 @@ def run_weekly_command(args: argparse.Namespace) -> None:
     )
     report.to_csv(output_dir / "weekly_report.csv", index=False)
     if not args.no_save_history:
-        append_snapshot(history_path, ranking)
+        if strategy is not None:
+            try:
+                append_strategy_snapshot(history_path, ranking, strategy.version, strategy.config_hash)
+            except ValueError as exc:
+                raise SystemExit(str(exc)) from exc
+        else:
+            append_snapshot(history_path, ranking)
 
     previous_label = "none"
     if not previous.empty:

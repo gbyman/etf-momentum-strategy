@@ -12,10 +12,7 @@
 
 ```bash
 uv run pytest                                  # 전체 테스트
-uv run etf-momentum rank --universe config/universe_kr_pension.csv \
-  --benchmark 069500.KS --cash 153130.KS --account pension \
-  --lookback-years 3 --min-avg-traded-value 1e9 --top 15 \
-  --top-n 4 --max-per-group 1 --risk-on-benchmark      # 현재 순위 + 직전 월말 기준 선택 종목
+uv run etf-momentum rank --strategy config/strategies/pension.json   # 현재 순위 + 직전 월말 선택, 신호 기록
 uv run python scripts/research_tables.py --end 2025-02-28  # 연구 문서 표 재생성
 ```
 
@@ -23,6 +20,7 @@ uv run python scripts/research_tables.py --end 2025-02-28  # 연구 문서 표 �
 
 ## 연구 결과를 만들 때의 규칙
 
+- 전략 규칙을 바꿀 때는 `config/strategies/<id>.json`을 고치고 `version`을 올린다. `results/strategies/<id>/signals.csv`의 기존 행은 고치거나 지우지 않는다.
 - 데이터 기간은 `--end`(조합 spec은 `"end"`)로 고정한다. 현재 연구 기준은 `--end 2026-10-07`.
 - **코드를 먼저 커밋한 뒤** 결과를 만든다. `*_run_config.json`의 `code_revision`이 `dirty=false`여야 한다.
 - 결과를 만드는 동안 추적 중인 파일을 고치거나 새 파일을 두지 않는다. untracked 파일도 dirty로 기록된다.

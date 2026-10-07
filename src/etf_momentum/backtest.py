@@ -12,6 +12,9 @@ from etf_momentum.signals import MomentumConfig, rank_momentum
 # buy_and_hold: target weights are set at each rebalance and then drift with prices until the next one.
 # daily_rebalanced: target weights are restored every day (the original, simpler model).
 ACCOUNTING_CHOICES = ("buy_and_hold", "daily_rebalanced")
+# same_close: trade at the signal day's close. next_close: trade at the next trading day's close; the
+# previous holdings keep earning that day (closer to "check the month-end signal, trade next session").
+EXECUTION_CHOICES = ("same_close", "next_close")
 EXECUTION_ASSUMPTION = (
     "Signals use closes up to and including the rebalance date; trades fill at that same close; "
     "returns accrue from the next trading day; transaction costs are deducted on the first holding day."
@@ -46,6 +49,7 @@ class BacktestConfig:
     # Market filter tickers for risk_on_benchmark (default: the benchmark). Risk-on when ANY of them
     # closes above its SMA, e.g. ("069500.KS", "360750.KS") stays invested if Korea or the US is trending up.
     risk_on_tickers: tuple[str, ...] | None = None
+    execution: str = "same_close"
 
 
 def run_backtest(
@@ -55,6 +59,8 @@ def run_backtest(
 ) -> tuple[pd.DataFrame, pd.DataFrame, dict[str, float]]:
     if config.top_n < 1:
         raise ValueError("top_n must be at least 1")
+    if config.execution not in EXECUTION_CHOICES:
+        raise ValueError(f"Unsupported execution: {config.execution}; choose from {', '.join(EXECUTION_CHOICES)}")
     if config.accounting not in ACCOUNTING_CHOICES:
         raise ValueError(f"Unsupported accounting: {config.accounting}; choose from {', '.join(ACCOUNTING_CHOICES)}")
     prices = prices.sort_index().dropna(axis=1, how="all").ffill()
@@ -79,8 +85,12 @@ def run_backtest(
 
     for idx, rebalance_date in enumerate(rebalance_dates[:-1]):
         next_rebalance_date = rebalance_dates[idx + 1]
-        start_pos = prices.index.get_loc(rebalance_date) + 1
-        end_pos = prices.index.get_loc(next_rebalance_date)
+        # Holdings set at the trade close earn from the next day until the next trade close (inclusive).
+        lag = 1 if config.execution == "next_close" else 0
+        last_pos = len(prices.index) - 1
+        trade_pos = prices.index.get_loc(rebalance_date) + lag
+        start_pos = trade_pos + 1
+        end_pos = min(prices.index.get_loc(next_rebalance_date) + lag, last_pos)
         if start_pos > end_pos:
             continue
         holding_dates = prices.index[start_pos : end_pos + 1]
@@ -109,6 +119,7 @@ def run_backtest(
         positions.append(
             {
                 "rebalance_date": rebalance_date,
+                "trade_date": prices.index[trade_pos],
                 "hold_until": next_rebalance_date,
                 "tickers": ",".join(selected),
                 "weights": ",".join(f"{ticker}:{weights[ticker]:.4f}" for ticker in selected),

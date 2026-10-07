@@ -119,3 +119,44 @@ def test_selection_file_explains_picks_exclusions_and_cash(reason_setup) -> None
 def test_excluded_rows_are_not_written_to_the_signal_log(reason_setup) -> None:
     signals = pd.read_csv(reason_setup / "strategies" / "why" / "signals.csv", dtype=str)
     assert "excluded" not in set(signals["status"])
+
+
+# 3-4. next_close execution: trade at the close after the signal day; the old holdings earn that day
+from etf_momentum.backtest import BacktestConfig, run_backtest  # noqa: E402
+from etf_momentum.signals import MomentumConfig  # noqa: E402
+
+
+def one_asset() -> tuple[pd.DataFrame, BacktestConfig]:
+    index = pd.bdate_range("2020-01-01", periods=600)
+    daily = pd.Series(0.001, index=index)
+    prices = pd.DataFrame({"A": 100 * (1 + daily).cumprod(), "BENCH": 100.0, "CASH": 100.0}, index=index)
+    config = BacktestConfig(top_n=1, cash_ticker="CASH", benchmark="BENCH", candidate_tickers=("A",),
+                            momentum=MomentumConfig(skip_days=0, sma_window=100))
+    return prices, config
+
+
+def test_next_close_misses_exactly_the_signal_day_after_return_and_double_counts_nothing() -> None:
+    prices, config = one_asset()
+    same, same_pos, _ = run_backtest(prices, config)
+    nxt, next_pos, _ = run_backtest(prices, BacktestConfig(**{**config.__dict__, "execution": "next_close"}))
+    # nothing held before the first trade, so next_close lacks only the first holding day's +0.1%
+    assert same["strategy"].iloc[-1] / nxt["strategy"].iloc[-1] == pytest.approx(1.001, rel=1e-9)
+    first_signal = pd.Timestamp(next_pos["rebalance_date"].iloc[0])
+    assert pd.Timestamp(next_pos["trade_date"].iloc[0]) == prices.index[prices.index.get_loc(first_signal) + 1]
+
+
+def test_next_close_does_not_earn_the_jump_on_the_day_after_the_signal() -> None:
+    prices, config = one_asset()
+    _, positions, _ = run_backtest(prices, config)
+    signal = pd.Timestamp(positions["rebalance_date"].iloc[0])
+    jump_day = prices.index[prices.index.get_loc(signal) + 1]
+    prices.loc[jump_day:, "A"] *= 1.5  # +50% on the first day after the signal, before a next_close trade
+    same, _, _ = run_backtest(prices, config)
+    nxt, _, _ = run_backtest(prices, BacktestConfig(**{**config.__dict__, "execution": "next_close"}))
+    assert same["strategy"].iloc[-1] / nxt["strategy"].iloc[-1] == pytest.approx(1.5 * 1.001, rel=1e-9)
+
+
+def test_unknown_execution_is_rejected() -> None:
+    prices, config = one_asset()
+    with pytest.raises(ValueError, match="execution"):
+        run_backtest(prices, BacktestConfig(**{**config.__dict__, "execution": "next_open"}))

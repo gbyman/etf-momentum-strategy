@@ -15,6 +15,7 @@ import pandas as pd
 
 from etf_momentum.backtest import (
     ACCOUNTING_CHOICES,
+    EXECUTION_CHOICES,
     BacktestConfig,
     previous_month_end,
     run_backtest,
@@ -123,6 +124,12 @@ def main() -> None:
     backtest_parser.add_argument(
         "--strategy", default=None, help="Strategy JSON (config/strategies/*.json) fixing every selection setting"
     )
+    backtest_parser.add_argument(
+        "--execution",
+        default="same_close",
+        choices=EXECUTION_CHOICES,
+        help="same_close: trade at the signal close; next_close: trade at the next trading day's close",
+    )
     backtest_parser.set_defaults(func=run_backtest_command)
 
     compare_parser = subparsers.add_parser("compare", help="Compare rebalance and parameter combinations")
@@ -169,6 +176,12 @@ def main() -> None:
         help="Comma-separated market filter tickers for --risk-on-benchmark (default: --benchmark); "
         "risk-on if any is above its SMA",
     )
+    compare_parser.add_argument(
+        "--execution",
+        default="same_close",
+        choices=EXECUTION_CHOICES,
+        help="same_close: trade at the signal close; next_close: trade at the next trading day's close",
+    )
     compare_parser.set_defaults(func=run_compare_command)
 
     wf_parser = subparsers.add_parser("walkforward", help="Walk-forward out-of-sample test of parameter selection")
@@ -207,6 +220,12 @@ def main() -> None:
         help="Comma-separated market filter tickers for --risk-on-benchmark (default: --benchmark); "
         "risk-on if any is above its SMA",
     )
+    wf_parser.add_argument(
+        "--execution",
+        default="same_close",
+        choices=EXECUTION_CHOICES,
+        help="same_close: trade at the signal close; next_close: trade at the next trading day's close",
+    )
     wf_parser.set_defaults(func=run_walkforward_command)
 
     pf_parser = subparsers.add_parser("portfolio", help="Combine sleeves (ETFs, strategy curves) into one portfolio")
@@ -238,7 +257,7 @@ def run_rank_command(args: argparse.Namespace) -> None:
     traded_value = _traded_value(tickers, start, args, prices)
     prices, traded_value = _apply_proxies(members, prices, traded_value, start, args)
     _require_tickers(prices, _required(args, include_cash=False))
-    save_run_metadata(output_dir, args, prices, traded_value=traded_value)
+    save_run_metadata(output_dir, args, prices, traded_value=traded_value, execution=_execution_note(args))
     config = _momentum_config_from_args(args)
     ranking = rank_momentum(prices, benchmark=args.benchmark, config=config, candidate_tickers=_candidates(members, args), traded_value=traded_value)
     _exit_if_empty(ranking)
@@ -422,7 +441,7 @@ def run_weekly_command(args: argparse.Namespace) -> None:
     traded_value = _traded_value(tickers, start, args, prices)
     prices, traded_value = _apply_proxies(members, prices, traded_value, start, args)
     _require_tickers(prices, _required(args, include_cash=False))
-    save_run_metadata(output_dir, args, prices, traded_value=traded_value)
+    save_run_metadata(output_dir, args, prices, traded_value=traded_value, execution=_execution_note(args))
     config = _momentum_config_from_args(args)
     ranking = rank_momentum(prices, benchmark=args.benchmark, config=config, candidate_tickers=_candidates(members, args), traded_value=traded_value)
     _exit_if_empty(ranking)
@@ -498,10 +517,11 @@ def run_backtest_command(args: argparse.Namespace) -> None:
     traded_value = _traded_value(tickers, args.start, args, prices)
     prices, traded_value = _apply_proxies(members, prices, traded_value, args.start, args)
     _require_tickers(prices, _required(args, include_cash=True))
-    save_run_metadata(output_dir, args, prices, traded_value=traded_value)
+    save_run_metadata(output_dir, args, prices, traded_value=traded_value, execution=_execution_note(args))
     momentum_config = _momentum_config_from_args(args)
     config = BacktestConfig(
         accounting=args.accounting,
+        execution=args.execution,
         target_volatility=args.target_vol,
         max_risky_weight=_max_risky_weight(args),
         safe_tickers=_safe_tickers(members, args),
@@ -548,7 +568,7 @@ def run_compare_command(args: argparse.Namespace) -> None:
     traded_value = _traded_value(tickers, args.start, args, prices)
     prices, traded_value = _apply_proxies(members, prices, traded_value, args.start, args)
     _require_tickers(prices, _required(args, include_cash=True))
-    save_run_metadata(output_dir, args, prices, traded_value=traded_value)
+    save_run_metadata(output_dir, args, prices, traded_value=traded_value, execution=_execution_note(args))
 
     base_momentum = _momentum_config_from_args(args)
     top_n_values = _parse_int_list(args.top_n_grid)
@@ -581,6 +601,7 @@ def run_compare_command(args: argparse.Namespace) -> None:
                             )
                             config = BacktestConfig(
                                 accounting=args.accounting,
+                                execution=args.execution,
                                 target_volatility=args.target_vol,
                                 max_risky_weight=_max_risky_weight(args),
                                 safe_tickers=_safe_tickers(members, args),
@@ -629,6 +650,7 @@ def run_compare_command(args: argparse.Namespace) -> None:
                                     "rank_by": rank_by,
                                     "max_per_group": args.max_per_group,
                                     "accounting": args.accounting,
+                                    "execution": args.execution,
                                     "min_avg_traded_value": args.min_avg_traded_value,
                                     "target_vol": args.target_vol,
                                     "account": args.account,
@@ -681,7 +703,7 @@ def run_walkforward_command(args: argparse.Namespace) -> None:
     traded_value = _traded_value(tickers, args.start, args, prices)
     prices, traded_value = _apply_proxies(members, prices, traded_value, args.start, args)
     _require_tickers(prices, _required(args, include_cash=True))
-    save_run_metadata(output_dir, args, prices, traded_value=traded_value)
+    save_run_metadata(output_dir, args, prices, traded_value=traded_value, execution=_execution_note(args))
     if args.cash and args.cash not in prices.columns:
         raise SystemExit(f"Cash ticker {args.cash} has no price data; use --cash none to hold uninvested cash")
 
@@ -712,6 +734,7 @@ def run_walkforward_command(args: argparse.Namespace) -> None:
         print(f"[{number}/{len(grid)}] {label}", flush=True)
         config = BacktestConfig(
             accounting=args.accounting,
+            execution=args.execution,
             target_volatility=args.target_vol,
             max_risky_weight=_max_risky_weight(args),
             safe_tickers=_safe_tickers(members, args),
@@ -747,6 +770,7 @@ def run_walkforward_command(args: argparse.Namespace) -> None:
             "min_relative_momentum": min_rel,
             "sma_window": sma,
             "accounting": args.accounting,
+            "execution": args.execution,
             "transaction_cost_bps": args.transaction_cost_bps,
             "min_avg_traded_value": args.min_avg_traded_value,
             "target_vol": args.target_vol,
@@ -1119,6 +1143,17 @@ def _apply_strategy(args: argparse.Namespace, strategy: Strategy) -> None:
     args.max_per_group = strategy.max_per_group
     args.risk_on_benchmark = strategy.risk_on_benchmark
     args.risk_on_ticker = ",".join(strategy.risk_on_tickers) if strategy.risk_on_tickers else None
+
+
+def _execution_note(args: argparse.Namespace) -> str | None:
+    """Run-record text for commands that simulate trades; None keeps the default note."""
+    if getattr(args, "execution", "same_close") != "next_close":
+        return None
+    return (
+        "Signals use closes up to and including the rebalance date; trades fill at the next trading day's close, "
+        "the previous holdings earn that day; returns of the new holdings accrue from the day after; "
+        "transaction costs are deducted on their first holding day."
+    )
 
 
 def _risk_on_tickers(args: argparse.Namespace) -> tuple[str, ...] | None:

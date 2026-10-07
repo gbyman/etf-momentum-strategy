@@ -505,7 +505,9 @@ def test_without_strategy_commands_behave_as_before(tmp_path, monkeypatch, offli
 - [ ] **Step 2: Run tests to verify they fail**
 
 Run: `uv run --offline pytest tests/test_strategy_cli.py -q`
-Expected: argparse rejects the unknown `--strategy` option (`error: unrecognized arguments: --strategy`). The conflict tests also exit with code 2 at this point, so they only prove something after Step 3; the tests that must fail now are `test_rank_and_backtest_pick_the_same_etfs_from_one_strategy_file`, `test_invalid_strategy_file_stops_before_download` (exit code 2 instead of a message naming `bad.json`) and `test_weekly_history_file_conflicts_with_strategy` is not yet meaningful either. Confirm the first two fail.
+Expected: argparse rejects the unknown `--strategy` option (`error: unrecognized arguments: --strategy`, exit code 2).
+- Must FAIL now: `test_rank_and_backtest_pick_the_same_etfs_from_one_strategy_file` and `test_invalid_strategy_file_stops_before_download` (exit code 2 instead of a message naming `bad.json`).
+- The two conflict tests already exit with code 2 for the wrong reason (unknown option), so they only become meaningful after Step 3. Re-check them then.
 
 - [ ] **Step 3: Write the implementation**
 

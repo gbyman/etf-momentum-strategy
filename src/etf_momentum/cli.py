@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import math
+import sys
 import itertools
 import json
 from dataclasses import replace
@@ -32,16 +33,26 @@ from etf_momentum.data import (
 )
 from etf_momentum.portfolio import PortfolioConfig, annualized_cost, run_portfolio, sleeve_returns_on_calendar
 from etf_momentum.reporting import ensure_output_dir, save_equity_chart, save_json, save_run_metadata
+from etf_momentum.strategy import Strategy, StrategyError, load_strategy
 from etf_momentum.signals import LIQUIDITY_MAX_STALE_DAYS, RANK_BY_CHOICES, MomentumConfig, rank_momentum
 from etf_momentum.walkforward import METRICS, oos_equity, walk_forward
 from etf_momentum.weekly import append_snapshot, build_weekly_report, load_previous_snapshot
+
+
+STRATEGY_CONFLICTS = (
+    "--universe", "--benchmark", "--cash", "--account", "--use-proxies", "--lookbacks", "--weights",
+    "--skip-days", "--sma-window", "--volatility-window", "--rank-by", "--min-avg-traded-value",
+    "--top-n", "--max-per-group", "--risk-on-benchmark", "--risk-on-ticker", "--min-weighted-momentum",
+    "--min-trend-strength", "--min-relative-momentum", "--require-relative-strength", "--max-risky-weight",
+    "--proxy-fx", "--history-file",
+)
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="ETF sector momentum ranking and backtesting")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    rank_parser = subparsers.add_parser("rank", help="Rank ETFs by momentum")
+    rank_parser = subparsers.add_parser("rank", help="Rank ETFs by momentum", allow_abbrev=False)
     _add_common_args(rank_parser)
     rank_parser.add_argument("--top", type=_positive_int, default=20, help="Number of rows to print")
     rank_parser.add_argument("--top-n", type=_positive_int, default=3, help="ETFs to select (same rule as backtest)")
@@ -52,9 +63,12 @@ def main() -> None:
     rank_parser.add_argument(
         "--risk-on-ticker", default=None, help="Comma-separated market filter tickers (default: --benchmark)"
     )
+    rank_parser.add_argument(
+        "--strategy", default=None, help="Strategy JSON (config/strategies/*.json) fixing every selection setting"
+    )
     rank_parser.set_defaults(func=run_rank_command)
 
-    weekly_parser = subparsers.add_parser("weekly", help="Weekly leadership report against prior snapshot")
+    weekly_parser = subparsers.add_parser("weekly", help="Weekly leadership report against prior snapshot", allow_abbrev=False)
     _add_common_args(weekly_parser)
     weekly_parser.add_argument("--top", type=_positive_int, default=15, help="Number of report rows to print")
     weekly_parser.add_argument("--watch-rank", type=_positive_int, default=10, help="Ranks to monitor for leadership changes")
@@ -63,9 +77,12 @@ def main() -> None:
     weekly_parser.add_argument("--drop-threshold", type=_positive_int, default=3, help="Rank deterioration treated as fading")
     weekly_parser.add_argument("--history-file", default=None, help="Ranking history CSV; defaults to output-dir/rank_history.csv")
     weekly_parser.add_argument("--no-save-history", action="store_true", help="Do not append this run to history")
+    weekly_parser.add_argument(
+        "--strategy", default=None, help="Strategy JSON (config/strategies/*.json) fixing every selection setting"
+    )
     weekly_parser.set_defaults(func=run_weekly_command)
 
-    backtest_parser = subparsers.add_parser("backtest", help="Backtest monthly ETF momentum rotation")
+    backtest_parser = subparsers.add_parser("backtest", help="Backtest monthly ETF momentum rotation", allow_abbrev=False)
     _add_common_args(backtest_parser)
     backtest_parser.add_argument("--top-n", type=_positive_int, default=3, help="Number of ETFs to hold")
     backtest_parser.add_argument("--rebalance", default="M", help="Pandas resample frequency, e.g. M or W-FRI")
@@ -101,6 +118,9 @@ def main() -> None:
         default=None,
         help="Comma-separated market filter tickers for --risk-on-benchmark (default: --benchmark); "
         "risk-on if any is above its SMA",
+    )
+    backtest_parser.add_argument(
+        "--strategy", default=None, help="Strategy JSON (config/strategies/*.json) fixing every selection setting"
     )
     backtest_parser.set_defaults(func=run_backtest_command)
 
@@ -196,6 +216,15 @@ def main() -> None:
     pf_parser.set_defaults(func=run_portfolio_command)
 
     args = parser.parse_args()
+    args.strategy_info = None
+    if getattr(args, "strategy", None):
+        conflicts = _conflicting_options(sys.argv[2:])
+        if conflicts:
+            parser.error(f"--strategy fixes the selection rule; remove {', '.join(conflicts)}")
+        try:
+            _apply_strategy(args, load_strategy(args.strategy))
+        except StrategyError as exc:
+            raise SystemExit(f"Strategy file error: {exc}") from exc
     args.func(args)
 
 
@@ -951,6 +980,39 @@ def _traded_value(
 def _candidates(members: list, args: argparse.Namespace) -> tuple[str, ...]:
     """Universe members allowed in the chosen account; the benchmark and cash ETF are reference assets only."""
     return account_candidates(members, args.account, args.benchmark, args.cash)
+
+
+def _conflicting_options(argv: list[str]) -> list[str]:
+    """Selection options given on the command line, in either `--opt value` or `--opt=value` form."""
+    given = {token.split("=", 1)[0] for token in argv if token.startswith("--")}
+    return [option for option in STRATEGY_CONFLICTS if option in given]
+
+
+def _apply_strategy(args: argparse.Namespace, strategy: Strategy) -> None:
+    """Write the strategy's selection settings into args, so the normal command code runs unchanged."""
+    args.strategy_info = strategy
+    args.universe = strategy.universe
+    args.account = strategy.account
+    args.benchmark = strategy.benchmark
+    args.cash = strategy.cash
+    args.use_proxies = strategy.use_proxies
+    args.proxy_fx = "KRW=X"
+    args.lookbacks = ",".join(str(v) for v in strategy.lookbacks)
+    args.weights = ",".join(str(v) for v in strategy.weights)
+    args.skip_days = strategy.skip_days
+    args.sma_window = strategy.sma_window
+    args.volatility_window = strategy.volatility_window
+    args.rank_by = strategy.rank_by
+    args.min_avg_traded_value = strategy.min_avg_traded_value
+    args.min_weighted_momentum = 0.0
+    args.min_trend_strength = 0.0
+    args.min_relative_momentum = None
+    args.require_relative_strength = False
+    args.max_risky_weight = None
+    args.top_n = strategy.top_n
+    args.max_per_group = strategy.max_per_group
+    args.risk_on_benchmark = strategy.risk_on_benchmark
+    args.risk_on_ticker = ",".join(strategy.risk_on_tickers) if strategy.risk_on_tickers else None
 
 
 def _risk_on_tickers(args: argparse.Namespace) -> tuple[str, ...] | None:

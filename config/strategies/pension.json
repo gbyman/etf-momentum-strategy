@@ -1,0 +1,25 @@
+{
+  "id": "pension",
+  "version": 1,
+  "description": "연금저축: 상위 4개, 그룹당 1개, KODEX 200 시장 필터, 유동성 10억 원",
+  "universe": "config/universe_kr_pension.csv",
+  "account": "pension",
+  "benchmark": "069500.KS",
+  "cash": "153130.KS",
+  "use_proxies": true,
+  "signal": {
+    "lookbacks": [63, 126, 252],
+    "weights": [0.3, 0.3, 0.4],
+    "skip_days": 21,
+    "sma_window": 200,
+    "volatility_window": 63,
+    "rank_by": "weighted_momentum",
+    "min_avg_traded_value": 1000000000
+  },
+  "selection": {
+    "top_n": 4,
+    "max_per_group": 1,
+    "risk_on_benchmark": true,
+    "risk_on_tickers": null
+  }
+}

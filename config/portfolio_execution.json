@@ -1,0 +1,102 @@
+{
+ "base_currency": "KRW",
+ "start": "2010-01-01",
+ "end": "2026-10-07",
+ "fx": {
+  "USD": "KRW=X"
+ },
+ "cash_ticker": "153130.KS",
+ "calendar_ticker": "069500.KS",
+ "borrow_rate": 0.07,
+ "rebalance_cost_bps": 5,
+ "periods": [
+  [
+   "2016-02-29",
+   "2025-02-28"
+  ],
+  [
+   "2016-02-29",
+   null
+  ]
+ ],
+ "sleeves": {
+  "SP500": {
+   "ticker": "SPY",
+   "currency": "USD"
+  },
+  "WF_same": {
+   "equity_csv": "results/walkforward/kr_pension_pension_10eok_10bp_robustgrid_tvoff/walkforward_equity.csv",
+   "column": "walk_forward",
+   "currency": "KRW"
+  },
+  "WF_next": {
+   "equity_csv": "results/walkforward/kr_pension_pension_10eok_10bp_robustgrid_tvoff_nextclose/walkforward_equity.csv",
+   "column": "walk_forward",
+   "currency": "KRW"
+  },
+  "FIX_same": {
+   "equity_csv": "results/backtest/pension_fixed_top4_equal/equity_curve.csv",
+   "column": "strategy",
+   "currency": "KRW"
+  },
+  "FIX_next": {
+   "equity_csv": "results/backtest/pension_fixed_top4_equal_nextclose/equity_curve.csv",
+   "column": "strategy",
+   "currency": "KRW"
+  }
+ },
+ "scenarios": [
+  {
+   "name": "WF_same 100",
+   "weights": {
+    "WF_same": 1.0
+   }
+  },
+  {
+   "name": "WF_next 100",
+   "weights": {
+    "WF_next": 1.0
+   }
+  },
+  {
+   "name": "FIX_same 100",
+   "weights": {
+    "FIX_same": 1.0
+   }
+  },
+  {
+   "name": "FIX_next 100",
+   "weights": {
+    "FIX_next": 1.0
+   }
+  },
+  {
+   "name": "S&P500 70 / WF_same 30",
+   "weights": {
+    "SP500": 0.7,
+    "WF_same": 0.3
+   }
+  },
+  {
+   "name": "S&P500 70 / WF_next 30",
+   "weights": {
+    "SP500": 0.7,
+    "WF_next": 0.3
+   }
+  },
+  {
+   "name": "S&P500 70 / FIX_same 30",
+   "weights": {
+    "SP500": 0.7,
+    "FIX_same": 0.3
+   }
+  },
+  {
+   "name": "S&P500 70 / FIX_next 30",
+   "weights": {
+    "SP500": 0.7,
+    "FIX_next": 0.3
+   }
+  }
+ ]
+}

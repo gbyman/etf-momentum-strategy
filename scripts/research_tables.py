@@ -51,6 +51,16 @@ FILTER_TABLE = [
     ("한국 또는 미국", "kr_pension_pension_10eok_10bp_robustgrid_tvoff_filter_kr_or_us"),
     ("필터 없음", "kr_pension_pension_10eok_10bp_robustgrid_tvoff_filter_none"),
 ]
+EXECUTION_SCENARIOS = [
+    ("연금 모멘텀(워크포워드), 같은 날 종가", "WF_same 100"),
+    ("연금 모멘텀(워크포워드), 다음 날 종가", "WF_next 100"),
+    ("고정 설정(동일 비중), 같은 날 종가", "FIX_same 100"),
+    ("고정 설정(동일 비중), 다음 날 종가", "FIX_next 100"),
+    ("S&P500 70 / 워크포워드 30, 같은 날 종가", "S&P500 70 / WF_same 30"),
+    ("S&P500 70 / 워크포워드 30, 다음 날 종가", "S&P500 70 / WF_next 30"),
+    ("S&P500 70 / 고정 설정 30, 같은 날 종가", "S&P500 70 / FIX_same 30"),
+    ("S&P500 70 / 고정 설정 30, 다음 날 종가", "S&P500 70 / FIX_next 30"),
+]
 COMBO_SCENARIOS = [
     ("S&P500 100% (원화 환산)", "S&P500 100"),
     ("S&P500 70 / 연금 모멘텀(워크포워드) 30", "S&P500 70 / PEN_mom 30"),
@@ -115,13 +125,21 @@ def main() -> None:
         curve = wf_curve(run)
         out.append(row(label, stats(curve, "kr", args.end), stats(curve, "kr", None)))
 
-    summary = pd.read_csv("results/portfolio/portfolio_summary.csv")
-    main_period = summary["period"].str.endswith(args.end)
-    out.append("\n### 원화 기준 조합 (한국 거래일 기준 평가)\n\n" + header.replace("전략", "조합"))
-    for label, scenario in COMBO_SCENARIOS:
-        rows = summary[summary["scenario"] == scenario]
-        main, full = rows[main_period.loc[rows.index]].iloc[0], rows[~main_period.loc[rows.index]].iloc[0]
-        out.append(row(label, main, full))
+    def portfolio_table(title: str, path: str, scenarios: list[tuple[str, str]]) -> None:
+        summary = pd.read_csv(path)
+        main_period = summary["period"].str.endswith(args.end)
+        out.append(f"\n### {title}\n\n" + header.replace("전략", "조합"))
+        for label, scenario in scenarios:
+            rows = summary[summary["scenario"] == scenario]
+            main, full = rows[main_period.loc[rows.index]].iloc[0], rows[~main_period.loc[rows.index]].iloc[0]
+            out.append(row(label, main, full))
+
+    portfolio_table("원화 기준 조합 (한국 거래일 기준 평가)", "results/portfolio/portfolio_summary.csv", COMBO_SCENARIOS)
+    portfolio_table(
+        "체결 시점 비교 (월말 신호, 같은 날 종가 vs 다음 날 종가)",
+        "results/portfolio_execution/portfolio_summary.csv",
+        EXECUTION_SCENARIOS,
+    )
 
     text = "\n".join(out) + "\n"
     Path(args.output).parent.mkdir(parents=True, exist_ok=True)

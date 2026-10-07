@@ -160,3 +160,18 @@ def test_unknown_execution_is_rejected() -> None:
     prices, config = one_asset()
     with pytest.raises(ValueError, match="execution"):
         run_backtest(prices, BacktestConfig(**{**config.__dict__, "execution": "next_open"}))
+
+
+# 3-5. compare the month-end selection with what the user holds now (no quantities, no orders)
+def test_holdings_changes_split_keep_add_drop() -> None:
+    changes = cli._holdings_changes(current=["A", "X", "CASH"], selected=["A", "C"], cash="CASH")
+    assert changes == {"keep": ["A"], "add": ["C"], "drop": ["X"]}  # the cash ETF is never "dropped"
+
+
+def test_rank_with_holdings_prints_the_comparison(reason_setup, monkeypatch, capsys, tmp_path) -> None:
+    monkeypatch.setattr(sys, "argv", ["etf-momentum", "rank", "--strategy", str(reason_setup.parent / "why.json"),
+                                      "--holdings", "A,D", "--output-dir", str(tmp_path / "h")])
+    capsys.readouterr()
+    cli.main()
+    out = capsys.readouterr().out
+    assert "유지: A" in out and "신규 편입: C" in out and "선정 제외: D" in out

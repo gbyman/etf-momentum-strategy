@@ -59,6 +59,7 @@ uv run etf-momentum backtest --strategy config/strategies/pension.json --start 2
 - 기록은 `results/strategies/<id>/`에 쌓입니다.
   - `signals.csv`: `rank`를 실행할 때마다 직전 월말 선택을 기록합니다. 기존 행은 고치지 않습니다. 같은 월말·같은 규칙인데 결과가 다르면(데이터 수정 등) `revision`을 올려 추가합니다. `--end`로 과거를 조회하면 기록하지 않습니다.
   - `weekly_history.csv`: 같은 규칙의 기록끼리만 비교합니다. 규칙이 바뀌면 새 기준으로 시작합니다.
+- `rank --holdings 139260.KS,091160.KS`처럼 지금 보유한 티커를 주면 선택 결과와 비교해 **유지 / 신규 편입 / 선정 제외**를 보여 줍니다. 현금 ETF는 비교에서 뺍니다. 수량이나 주문 금액은 계산하지 않습니다.
 한국 유니버스에서는 `--cash 153130.KS`를 함께 지정해야 단기채 ETF가 후보에서 빠집니다.
 화면에 표시되는 `return_1w`, `return_1m`, `return_3m`, `return_6m`, `return_12m`, `return_ytd`는 현재 기준 실제 기간 수익률입니다.
 `weighted_momentum`은 최근 1개월을 제외한 3/6/12개월 모멘텀 점수라서 기간 수익률과 용도가 다릅니다.

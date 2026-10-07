@@ -273,7 +273,7 @@ def run_rank_command(args: argparse.Namespace) -> None:
     print(f"Saved: {output_dir / 'latest_selection.csv'}")
     strategy = getattr(args, "strategy_info", None)
     if strategy is not None:
-        _record_month_end_signal(output_dir, strategy, selection, prices, args)
+        _record_month_end_signal(output_dir, strategy, selection[selection["status"] != "excluded"], prices, args)
 
 
 def _selection_today(args: argparse.Namespace) -> pd.Timestamp | None:
@@ -347,28 +347,70 @@ def _month_end_selection(
     names = {m.ticker: m.name for m in members}
     groups = {m.ticker: m.group for m in members}
     filters = ", ".join(_risk_on_tickers(args) or (args.benchmark,))
+    metrics = ranking.set_index("ticker")
 
     print(f"\n[선택 종목] 기준일 {as_of.date()} (직전 월말 종가), 상위 {args.top_n}개, 그룹당 최대 {args.max_per_group or '제한 없음'}")
     if args.risk_on_benchmark:
         print(f"시장 필터: {filters} 200일선 {'위 → 투자' if picked.risk_on else '아래 → 전액 현금'}")
     rows: list[dict[str, object]] = []
     for number, ticker in enumerate(picked.tickers, 1):
-        print(f" {number}. {ticker:<10} {names.get(ticker, ticker)}  {groups.get(ticker) or '-'}")
+        m = metrics.loc[ticker]
+        print(
+            f" {number}. {ticker:<10} {names.get(ticker, ticker)}  {groups.get(ticker) or '-'}"
+            f"  | 순위 {int(m['rank'])}, 점수 {m['weighted_momentum']:.1%}, 200일선 {m['trend_strength_vs_sma']:+.1%}"
+            f"{_traded_value_text(m['avg_traded_value'])}"
+        )
         rows.append({"status": "selected", "rank_in_selection": number, "ticker": ticker, "group": groups.get(ticker, "")})
     if picked.empty_slots:
         cash = args.cash or "미투자 현금"
-        print(f" 빈 자리 {picked.empty_slots}개 → 현금 ({cash})")
-        rows.append({"status": "cash", "ticker": args.cash or "", "slots": picked.empty_slots})
+        reason = "시장 필터 꺼짐" if not picked.risk_on else "조건 통과 후보 부족"
+        print(f" 빈 자리 {picked.empty_slots}개 → 현금 ({cash}): {reason}")
+        rows.append({"status": "cash", "ticker": args.cash or "", "slots": picked.empty_slots, "reason": reason})
     if picked.group_skipped:
         skipped = ", ".join(f"{t} ({groups.get(t)})" for t in picked.group_skipped)
         print(f" 그룹 제한으로 제외: {skipped}")
-        rows.extend({"status": "group_limit", "ticker": t, "group": groups.get(t, "")} for t in picked.group_skipped)
-    frame = pd.DataFrame(rows, columns=["status", "rank_in_selection", "ticker", "group", "slots"])
+        rows.extend(
+            {"status": "group_limit", "ticker": t, "group": groups.get(t, ""), "reason": f"그룹 제한 ({groups.get(t)})"}
+            for t in picked.group_skipped
+        )
+    # Better-ranked ETFs that failed a check: "why wasn't this one picked?"
+    cutoff = int(metrics.loc[picked.tickers, "rank"].max()) if picked.tickers else args.top_n
+    passed_over = ranking[(ranking["rank"] <= cutoff) & ~ranking["eligible"].astype(bool)].sort_values("rank")
+    if not passed_over.empty:
+        reasons = {row.ticker: _exclusion_reason(pd.Series(row._asdict())) for row in passed_over.itertuples(index=False)}
+        print(" 상위 후보 중 제외: " + ", ".join(f"{t} ({r})" for t, r in reasons.items()))
+        rows.extend({"status": "excluded", "ticker": t, "group": groups.get(t, ""), "reason": r} for t, r in reasons.items())
+    frame = pd.DataFrame(rows, columns=["status", "rank_in_selection", "ticker", "group", "slots", "reason"])
     frame.insert(0, "as_of", str(as_of.date()))
     frame["name"] = frame["ticker"].map(lambda t: names.get(t, t))
+    for column in ("rank", "weighted_momentum", "trend_strength_vs_sma", "avg_traded_value", "last_price_change"):
+        frame[column] = frame["ticker"].map(lambda t, c=column: metrics[c].get(t) if t in metrics.index else None)
     frame["risk_on"] = picked.risk_on
     frame["market_filter"] = ("on" if picked.risk_on else "off") if args.risk_on_benchmark else "unused"
     return frame
+
+
+EXCLUSION_CHECKS = (
+    ("positive_momentum", "모멘텀≤0"),
+    ("above_sma", "200일선 아래"),
+    ("relative_ok", "상대강도 미달"),
+    ("liquid", "유동성 부족"),
+    ("volatility_ok", "변동성 계산 불가"),
+    ("price_fresh", "가격 정체"),
+)
+
+
+def _exclusion_reason(row: pd.Series) -> str:
+    return ", ".join(label for column, label in EXCLUSION_CHECKS if column in row and not bool(row[column]))
+
+
+def _traded_value_text(value: object) -> str:
+    if value is None or pd.isna(value):
+        return ""
+    for size, suffix in ((1e9, "B"), (1e6, "M"), (1e3, "K")):
+        if abs(value) >= size:
+            return f", 거래대금 {value / size:,.1f}{suffix}"
+    return f", 거래대금 {value:,.0f}"
 
 
 def run_weekly_command(args: argparse.Namespace) -> None:

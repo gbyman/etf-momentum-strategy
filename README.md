@@ -40,6 +40,8 @@ uv run etf-momentum rank --universe config/universe_kr_pension.csv \
 
 `--top-n`(기본 3), `--max-per-group`(기본 1, 0이면 제한 없음), `--risk-on-benchmark`(기본 끔), `--risk-on-ticker`. 비중은 출력하지 않습니다.
 
+선택 종목마다 모멘텀 순위·점수, 200일선 대비 거리, 평균 거래대금(ETF 통화 기준 K/M/B, 예: 108.7B = 1,087억 원)을 함께 보여 줍니다. 마지막 선택 종목보다 순위가 높은데 뽑히지 않은 ETF는 이유(모멘텀≤0, 200일선 아래, 상대강도 미달, 유동성 부족, 변동성 계산 불가, 가격 정체)와 함께 `excluded`로, 빈 자리는 이유(시장 필터 꺼짐 / 조건 통과 후보 부족)와 함께 표시합니다. `latest_selection.csv`에는 `reason`과 지표 컬럼이 들어가고, `signals.csv`에는 `excluded` 행을 기록하지 않습니다.
+
 `--benchmark`와 `--cash` ETF는 유니버스 파일에 있어도 랭킹 후보에서 제외됩니다. 벤치마크는 상대강도 비교용, 현금성 ETF는 대기 자산으로만 쓰입니다.
 
 ### 전략 파일로 실행 (권장)

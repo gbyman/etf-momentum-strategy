@@ -20,6 +20,9 @@ RANK_BY_CHOICES = ("weighted_momentum", "risk_adjusted_score")
 # Traded-value data whose last observation is more than this many business days before the
 # rebalance date is treated as missing, so the ETF counts as illiquid.
 LIQUIDITY_MAX_STALE_DAYS = 5
+# A candidate whose price has not changed for more than this many trading days is treated as stale:
+# forward-filled gaps (missing data, suspension, delisting) show up as exact repeats of the last close.
+PRICE_MAX_STALE_DAYS = 5
 RANKING_COLUMNS = [
     "as_of",
     "ticker",
@@ -33,6 +36,8 @@ RANKING_COLUMNS = [
     "trend_strength_vs_sma",
     "realized_volatility",
     "volatility_ok",
+    "last_price_change",
+    "price_fresh",
     "risk_adjusted_score",
     "relative_to_benchmark",
     "relative_ok",
@@ -126,6 +131,7 @@ def rank_momentum(
 
         weighted_momentum = float(sum(weight * ret for weight, ret in zip(weights, lookback_returns)))
         trend_strength = float(current[ticker] / sma[ticker] - 1.0) if np.isfinite(sma[ticker]) and sma[ticker] > 0 else np.nan
+        last_change, price_fresh = _price_freshness(history[ticker])
         realized_vol = float(vol[ticker]) if np.isfinite(vol[ticker]) else np.nan
         volatility_ok = bool(np.isfinite(realized_vol))
         risk_adjusted_score = (
@@ -157,6 +163,8 @@ def rank_momentum(
                 "trend_strength_vs_sma": trend_strength,
                 "realized_volatility": realized_vol,
                 "volatility_ok": volatility_ok,
+                "last_price_change": last_change,
+                "price_fresh": price_fresh,
                 "risk_adjusted_score": risk_adjusted_score,
                 "relative_to_benchmark": relative_to_benchmark,
                 "relative_ok": bool(relative_ok),
@@ -164,7 +172,7 @@ def rank_momentum(
                 "positive_momentum": positive_momentum,
                 "avg_traded_value": ticker_value,
                 "liquid": liquid,
-                "eligible": bool(positive_momentum and above_sma and relative_ok and liquid and volatility_ok),
+                "eligible": bool(positive_momentum and above_sma and relative_ok and liquid and volatility_ok and price_fresh),
             }
         )
 
@@ -176,6 +184,17 @@ def rank_momentum(
     ranking["rank"] = score.rank(ascending=False, method="first", na_option="bottom").astype(int)
     ranking["eligible_rank"] = score.where(ranking["eligible"]).rank(ascending=False, method="first")
     return ranking.sort_values(["eligible", "rank"], ascending=[False, True]).reset_index(drop=True)
+
+
+def _price_freshness(series: pd.Series) -> tuple[pd.Timestamp | None, bool]:
+    """Date of the last close that differed from the previous one, and whether it is recent enough."""
+    values = series.dropna()
+    changed = values.diff().ne(0)  # the first observation counts as a change
+    if not changed.any():
+        return None, False
+    position = int(np.flatnonzero(changed.to_numpy())[-1])
+    unchanged_after = len(values) - 1 - position
+    return values.index[position], unchanged_after <= PRICE_MAX_STALE_DAYS
 
 
 def _average_traded_value(traded_value: pd.DataFrame | None, as_of: pd.Timestamp, window: int) -> pd.Series:

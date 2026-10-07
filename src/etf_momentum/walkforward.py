@@ -25,6 +25,8 @@ def walk_forward(
     min_coverage: float = 0.95,
 ) -> tuple[pd.Series, pd.DataFrame]:
     """Return spliced out-of-sample daily returns and one row per test window."""
+    if train_years < 1 or test_months < 1:
+        raise ValueError(f"train_years and test_months must be positive, got {train_years} and {test_months}")
     if metric not in METRICS:
         raise ValueError(f"Unsupported metric: {metric}; choose from {', '.join(METRICS)}")
     returns = returns.sort_index()

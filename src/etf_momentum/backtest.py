@@ -276,11 +276,16 @@ def select_holdings(
 
     The backtest and the rank command both use this, so their picks follow the same rules.
     """
+    if config.top_n < 1:
+        raise ValueError(f"top_n must be at least 1, got {config.top_n}")
     risk_on = True
     if config.risk_on_benchmark:
-        filters = [t for t in (config.risk_on_tickers or (config.benchmark,)) if t in prices.columns]
-        if filters:
-            risk_on = any(_above_sma(prices.loc[:rebalance_date, t], config.momentum.sma_window) for t in filters)
+        filters = config.risk_on_tickers or (config.benchmark,)
+        missing = [t for t in filters if t not in prices.columns or prices[t].loc[:rebalance_date].dropna().empty]
+        if missing:
+            # Never treat an unevaluated market filter as "risk on".
+            raise ValueError(f"Market filter ticker(s) without price data: {', '.join(missing)}")
+        risk_on = any(_above_sma(prices.loc[:rebalance_date, t], config.momentum.sma_window) for t in filters)
     if not risk_on or ranking.empty:
         return Selection(risk_on=risk_on, empty_slots=config.top_n)
     picked, skipped = _pick_tickers(ranking, config)
@@ -288,14 +293,25 @@ def select_holdings(
 
 
 def previous_month_end(dates: pd.DatetimeIndex, today: pd.Timestamp | None = None) -> pd.Timestamp:
-    """Last date in `dates` that falls in the most recent calendar month already over by `today`."""
+    """Last trading day of the month before `today`'s month, checked to be really in the data.
+
+    The month counts as complete when its last date in `dates` is the month's last weekday, or when
+    the data continues into the next month (so a holiday month-end such as Korea's 12-31 closure
+    still works). Otherwise the data stopped early and this raises instead of returning a mid-month
+    date; a missing month never falls back to an older one.
+    """
     today = pd.Timestamp(today or pd.Timestamp.today()).normalize()
     dates = pd.DatetimeIndex(dates).sort_values()
-    month_over = (dates.to_period("M").to_timestamp(how="end").normalize()) < today
-    completed = dates[month_over]
-    if completed.empty:
-        raise ValueError(f"No completed month in the data before {today.date()}")
-    return completed[-1]
+    month = today.to_period("M") - 1
+    in_month = dates[dates.to_period("M") == month]
+    if in_month.empty:
+        raise ValueError(f"No price data for {month} (the month before {today:%Y-%m})")
+    last = in_month[-1]
+    last_weekday = pd.bdate_range(month.start_time, month.end_time)[-1]
+    complete = last.normalize() >= last_weekday.normalize() or bool((dates > month.end_time).any())
+    if not complete:
+        raise ValueError(f"{month} month-end data is incomplete: last observation {last.date()}")
+    return last
 
 
 def _select_weights(

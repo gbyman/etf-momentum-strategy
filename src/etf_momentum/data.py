@@ -181,8 +181,10 @@ def _cached_download(
     stale_cache: Path | None = None
     if cache_path.exists() and not refresh:
         age_hours = (time.time() - cache_path.stat().st_mtime) / 3600
-        if end is not None or age_hours <= max_age_hours:
-            return _read_cache(cache_path, clean)
+        cached = _read_cache(cache_path, clean)
+        complete = set(ticker_list) <= set(cached.columns)  # older versions cached partial downloads
+        if complete and (end is not None or age_hours <= max_age_hours):
+            return cached
         stale_cache = cache_path
 
     Path(cache_dir).mkdir(parents=True, exist_ok=True)
@@ -204,6 +206,11 @@ def _cached_download(
     else:
         frame = _extract_field(raw, ticker_list, "Close") * _extract_field(raw, ticker_list, "Volume")
     frame = clean(frame)
+    missing = [ticker for ticker in ticker_list if ticker not in frame.columns]
+    if missing:
+        # Don't cache a partial download: the cache would keep the gap until it expires.
+        warnings.warn(f"No {kind} data downloaded for {', '.join(missing)}; not cached, the next run retries", stacklevel=3)
+        return frame
     frame.to_csv(cache_path)
     return frame
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import math
 import itertools
 import json
 from dataclasses import replace
@@ -42,10 +43,10 @@ def main() -> None:
 
     rank_parser = subparsers.add_parser("rank", help="Rank ETFs by momentum")
     _add_common_args(rank_parser)
-    rank_parser.add_argument("--top", type=int, default=20, help="Number of rows to print")
-    rank_parser.add_argument("--top-n", type=int, default=3, help="ETFs to select (same rule as backtest)")
+    rank_parser.add_argument("--top", type=_positive_int, default=20, help="Number of rows to print")
+    rank_parser.add_argument("--top-n", type=_positive_int, default=3, help="ETFs to select (same rule as backtest)")
     rank_parser.add_argument(
-        "--max-per-group", type=int, default=1, help="Max selected ETFs per universe 'group'; 0 disables the limit"
+        "--max-per-group", type=_non_negative_int, default=1, help="Max selected ETFs per universe 'group'; 0 disables the limit"
     )
     rank_parser.add_argument("--risk-on-benchmark", action="store_true", help="Select nothing when the market filter is off")
     rank_parser.add_argument(
@@ -55,31 +56,31 @@ def main() -> None:
 
     weekly_parser = subparsers.add_parser("weekly", help="Weekly leadership report against prior snapshot")
     _add_common_args(weekly_parser)
-    weekly_parser.add_argument("--top", type=int, default=15, help="Number of report rows to print")
-    weekly_parser.add_argument("--watch-rank", type=int, default=10, help="Ranks to monitor for leadership changes")
-    weekly_parser.add_argument("--leader-rank", type=int, default=5, help="Ranks considered persistent leadership")
-    weekly_parser.add_argument("--rise-threshold", type=int, default=3, help="Rank improvement treated as rising")
-    weekly_parser.add_argument("--drop-threshold", type=int, default=3, help="Rank deterioration treated as fading")
+    weekly_parser.add_argument("--top", type=_positive_int, default=15, help="Number of report rows to print")
+    weekly_parser.add_argument("--watch-rank", type=_positive_int, default=10, help="Ranks to monitor for leadership changes")
+    weekly_parser.add_argument("--leader-rank", type=_positive_int, default=5, help="Ranks considered persistent leadership")
+    weekly_parser.add_argument("--rise-threshold", type=_positive_int, default=3, help="Rank improvement treated as rising")
+    weekly_parser.add_argument("--drop-threshold", type=_positive_int, default=3, help="Rank deterioration treated as fading")
     weekly_parser.add_argument("--history-file", default=None, help="Ranking history CSV; defaults to output-dir/rank_history.csv")
     weekly_parser.add_argument("--no-save-history", action="store_true", help="Do not append this run to history")
     weekly_parser.set_defaults(func=run_weekly_command)
 
     backtest_parser = subparsers.add_parser("backtest", help="Backtest monthly ETF momentum rotation")
     _add_common_args(backtest_parser)
-    backtest_parser.add_argument("--top-n", type=int, default=3, help="Number of ETFs to hold")
+    backtest_parser.add_argument("--top-n", type=_positive_int, default=3, help="Number of ETFs to hold")
     backtest_parser.add_argument("--rebalance", default="M", help="Pandas resample frequency, e.g. M or W-FRI")
     backtest_parser.add_argument("--risk-on-benchmark", action="store_true", help="Hold cash when benchmark is below SMA")
-    backtest_parser.add_argument("--transaction-cost-bps", type=float, default=0.0, help="One-way trading cost in basis points")
+    backtest_parser.add_argument("--transaction-cost-bps", type=_non_negative_float, default=0.0, help="One-way trading cost in basis points")
     backtest_parser.add_argument(
         "--weighting",
         default="equal",
         choices=["equal", "inverse_vol", "score", "risk_adjusted_score"],
         help="Portfolio weighting method for selected ETFs",
     )
-    backtest_parser.add_argument("--max-position-weight", type=float, default=1.0, help="Maximum single ETF weight")
+    backtest_parser.add_argument("--max-position-weight", type=_unit_fraction, default=1.0, help="Maximum single ETF weight")
     backtest_parser.add_argument(
         "--max-per-group",
-        type=int,
+        type=_non_negative_int,
         default=1,
         help="Max ETFs held from one universe 'group'; 0 disables the limit",
     )
@@ -91,7 +92,7 @@ def main() -> None:
     )
     backtest_parser.add_argument(
         "--target-vol",
-        type=float,
+        type=_positive_float,
         default=None,
         help="Annualized volatility target (e.g. 0.15); scales exposure down with the rest in cash. Off by default",
     )
@@ -120,11 +121,11 @@ def main() -> None:
         help="Comma-separated relative-strength filters: off,on or numeric thresholds",
     )
     compare_parser.add_argument("--risk-on-benchmark", action="store_true", help="Hold cash when benchmark is below SMA")
-    compare_parser.add_argument("--transaction-cost-bps", type=float, default=0.0, help="One-way trading cost in basis points")
-    compare_parser.add_argument("--max-position-weight", type=float, default=1.0, help="Maximum single ETF weight")
+    compare_parser.add_argument("--transaction-cost-bps", type=_non_negative_float, default=0.0, help="One-way trading cost in basis points")
+    compare_parser.add_argument("--max-position-weight", type=_unit_fraction, default=1.0, help="Maximum single ETF weight")
     compare_parser.add_argument(
         "--max-per-group",
-        type=int,
+        type=_non_negative_int,
         default=1,
         help="Max ETFs held from one universe 'group'; 0 disables the limit",
     )
@@ -137,7 +138,7 @@ def main() -> None:
     )
     compare_parser.add_argument(
         "--target-vol",
-        type=float,
+        type=_positive_float,
         default=None,
         help="Annualized volatility target (e.g. 0.15); scales exposure down with the rest in cash. Off by default",
     )
@@ -161,10 +162,10 @@ def main() -> None:
     wf_parser.add_argument("--risk-on-grid", default="off,on", help="Benchmark SMA risk filter: off,on")
     wf_parser.add_argument("--relative-strength-grid", default="off,on", help="off,on or numeric thresholds")
     wf_parser.add_argument("--sma-window-grid", default=None, help="Optional comma-separated SMA windows")
-    wf_parser.add_argument("--transaction-cost-bps", type=float, default=5.0, help="One-way trading cost in basis points")
-    wf_parser.add_argument("--max-position-weight", type=float, default=1.0, help="Maximum single ETF weight")
-    wf_parser.add_argument("--train-years", type=int, default=5, help="Training window length in years")
-    wf_parser.add_argument("--test-months", type=int, default=12, help="Test window length (and step) in months")
+    wf_parser.add_argument("--transaction-cost-bps", type=_non_negative_float, default=5.0, help="One-way trading cost in basis points")
+    wf_parser.add_argument("--max-position-weight", type=_unit_fraction, default=1.0, help="Maximum single ETF weight")
+    wf_parser.add_argument("--train-years", type=_positive_int, default=5, help="Training window length in years")
+    wf_parser.add_argument("--test-months", type=_positive_int, default=12, help="Test window length (and step) in months")
     wf_parser.add_argument("--metric", default="calmar", choices=METRICS, help="Training score used to pick parameters")
     wf_parser.add_argument("--anchored", action="store_true", help="Expanding training window from the first date")
     wf_parser.add_argument(
@@ -175,7 +176,7 @@ def main() -> None:
     )
     wf_parser.add_argument(
         "--target-vol",
-        type=float,
+        type=_positive_float,
         default=None,
         help="Annualized volatility target (e.g. 0.15); scales exposure down with the rest in cash. Off by default",
     )
@@ -206,6 +207,7 @@ def run_rank_command(args: argparse.Namespace) -> None:
     prices = _download(tickers, start, args)
     traded_value = _traded_value(tickers, start, args, prices)
     prices, traded_value = _apply_proxies(members, prices, traded_value, start, args)
+    _require_tickers(prices, _required(args, include_cash=False))
     save_run_metadata(output_dir, args, prices, traded_value=traded_value)
     config = _momentum_config_from_args(args)
     ranking = rank_momentum(prices, benchmark=args.benchmark, config=config, candidate_tickers=_candidates(members, args), traded_value=traded_value)
@@ -241,11 +243,19 @@ def run_rank_command(args: argparse.Namespace) -> None:
     print(f"Saved: {output_dir / 'latest_selection.csv'}")
 
 
+def _selection_today(args: argparse.Namespace) -> pd.Timestamp | None:
+    """With --end (exclusive download end), the previous month-end is judged as of that date."""
+    return pd.Timestamp(args.end) if args.end else None
+
+
 def _month_end_selection(
     members: list, prices: pd.DataFrame, traded_value: pd.DataFrame | None, config: MomentumConfig, args: argparse.Namespace
 ) -> pd.DataFrame:
     """Print and return the ETFs the strategy would hold after the previous month-end close."""
-    as_of = previous_month_end(prices.index)
+    try:
+        as_of = previous_month_end(prices.index, today=_selection_today(args))
+    except ValueError as exc:
+        raise SystemExit(f"직전 월말 선택을 만들 수 없습니다: {exc}. --refresh로 데이터를 다시 받으세요") from exc
     ranking = rank_momentum(
         prices, as_of, benchmark=args.benchmark, config=config, candidate_tickers=_candidates(members, args), traded_value=traded_value
     )
@@ -293,6 +303,7 @@ def run_weekly_command(args: argparse.Namespace) -> None:
     prices = _download(tickers, start, args)
     traded_value = _traded_value(tickers, start, args, prices)
     prices, traded_value = _apply_proxies(members, prices, traded_value, start, args)
+    _require_tickers(prices, _required(args, include_cash=False))
     save_run_metadata(output_dir, args, prices, traded_value=traded_value)
     config = _momentum_config_from_args(args)
     ranking = rank_momentum(prices, benchmark=args.benchmark, config=config, candidate_tickers=_candidates(members, args), traded_value=traded_value)
@@ -352,6 +363,7 @@ def run_backtest_command(args: argparse.Namespace) -> None:
     prices = _download(tickers, args.start, args)
     traded_value = _traded_value(tickers, args.start, args, prices)
     prices, traded_value = _apply_proxies(members, prices, traded_value, args.start, args)
+    _require_tickers(prices, _required(args, include_cash=True))
     save_run_metadata(output_dir, args, prices, traded_value=traded_value)
     momentum_config = _momentum_config_from_args(args)
     config = BacktestConfig(
@@ -401,6 +413,7 @@ def run_compare_command(args: argparse.Namespace) -> None:
     prices = _download(tickers, args.start, args)
     traded_value = _traded_value(tickers, args.start, args, prices)
     prices, traded_value = _apply_proxies(members, prices, traded_value, args.start, args)
+    _require_tickers(prices, _required(args, include_cash=True))
     save_run_metadata(output_dir, args, prices, traded_value=traded_value)
 
     base_momentum = _momentum_config_from_args(args)
@@ -533,6 +546,7 @@ def run_walkforward_command(args: argparse.Namespace) -> None:
     prices = _download(tickers, args.start, args)
     traded_value = _traded_value(tickers, args.start, args, prices)
     prices, traded_value = _apply_proxies(members, prices, traded_value, args.start, args)
+    _require_tickers(prices, _required(args, include_cash=True))
     save_run_metadata(output_dir, args, prices, traded_value=traded_value)
     if args.cash and args.cash not in prices.columns:
         raise SystemExit(f"Cash ticker {args.cash} has no price data; use --cash none to hold uninvested cash")
@@ -719,10 +733,16 @@ def run_portfolio_command(args: argparse.Namespace) -> None:
     if spec.get("end") is None and (message := staleness_message(prices)):
         print(f"WARNING: {message}")
 
+    own: dict[str, pd.Series] = {}
+
     def own_dates(ticker: str) -> pd.Series:
         # Downloaded alone, so the series keeps only its own trading days. In the combined frame
         # every ticker is forward-filled onto the other markets' days (e.g. US days on Korean holidays).
-        return download_prices([ticker], start=spec.get("start"), end=spec.get("end"), cache_dir=args.cache_dir)[ticker]
+        if ticker not in own:
+            own[ticker] = download_prices(
+                [ticker], start=spec.get("start"), end=spec.get("end"), cache_dir=args.cache_dir, refresh=args.refresh
+            )[ticker]
+        return own[ticker]
 
     calendar = pd.DatetimeIndex(own_dates(calendar_ticker).dropna().index)
     print(f"Evaluation calendar: {calendar_ticker} trading days, {calendar[0].date()} ~ {calendar[-1].date()}")
@@ -816,20 +836,20 @@ def _add_common_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--benchmark", default="SPY", help="Benchmark ticker")
     parser.add_argument("--start", default="2010-01-01", help="Start date for historical data")
     parser.add_argument("--end", default=None, help="End date for historical data")
-    parser.add_argument("--lookback-years", type=int, default=5, help="Data years for ranking command")
+    parser.add_argument("--lookback-years", type=_positive_int, default=5, help="Data years for ranking command")
     parser.add_argument("--lookbacks", default="63,126,252", help="Momentum lookbacks in trading days")
     parser.add_argument("--weights", default="0.3,0.3,0.4", help="Momentum weights for lookbacks")
-    parser.add_argument("--skip-days", type=int, default=21, help="Recent days skipped in momentum calculation")
-    parser.add_argument("--sma-window", type=int, default=200, help="Absolute trend filter window")
+    parser.add_argument("--skip-days", type=_non_negative_int, default=21, help="Recent days skipped in momentum calculation")
+    parser.add_argument("--sma-window", type=_positive_int, default=200, help="Absolute trend filter window")
     parser.add_argument(
         "--rank-by",
         default="weighted_momentum",
         choices=RANK_BY_CHOICES,
         help="Score used to order ETFs (risk_adjusted_score = weighted momentum / volatility)",
     )
-    parser.add_argument("--volatility-window", type=int, default=63, help="Realized volatility window")
-    parser.add_argument("--min-weighted-momentum", type=float, default=0.0, help="Minimum weighted momentum for eligibility")
-    parser.add_argument("--min-trend-strength", type=float, default=0.0, help="Minimum price-vs-SMA trend strength")
+    parser.add_argument("--volatility-window", type=_positive_int, default=63, help="Realized volatility window")
+    parser.add_argument("--min-weighted-momentum", type=_finite_float, default=0.0, help="Minimum weighted momentum for eligibility")
+    parser.add_argument("--min-trend-strength", type=_finite_float, default=0.0, help="Minimum price-vs-SMA trend strength")
     parser.add_argument(
         "--require-relative-strength",
         action="store_true",
@@ -837,7 +857,7 @@ def _add_common_args(parser: argparse.ArgumentParser) -> None:
     )
     parser.add_argument(
         "--min-relative-momentum",
-        type=float,
+        type=_finite_float,
         default=None,
         help="Minimum momentum spread over benchmark; implies relative-strength filter",
     )
@@ -849,7 +869,7 @@ def _add_common_args(parser: argparse.ArgumentParser) -> None:
     )
     parser.add_argument(
         "--min-avg-traded-value",
-        type=float,
+        type=_non_negative_float,
         default=None,
         help="Exclude candidates whose 63-day average daily traded value is below this, in the ETF's currency "
         "(e.g. 1e9 = 10억 KRW, 2e7 = $20M); off by default",
@@ -862,7 +882,7 @@ def _add_common_args(parser: argparse.ArgumentParser) -> None:
     )
     parser.add_argument(
         "--max-risky-weight",
-        type=float,
+        type=_unit_fraction,
         default=None,
         help="Cap on total non-cash weight; defaults to 0.7 for --account retirement, else 1.0",
     )
@@ -972,6 +992,12 @@ def _apply_proxies(
         return prices, traded_value
     tickers = sorted(set(proxies.values()) | {args.proxy_fx})
     proxy_prices = download_prices(tickers, start=start, end=args.end, cache_dir=args.cache_dir, refresh=args.refresh)
+    if args.proxy_fx not in proxy_prices.columns:
+        raise SystemExit(f"No data for proxy FX {args.proxy_fx}; rerun with --refresh or without --use-proxies")
+    unavailable = sorted({p for p in proxies.values() if p not in proxy_prices.columns})
+    if unavailable:
+        print(f"WARNING: no data for proxy ticker(s) {', '.join(unavailable)}; those ETFs keep only their own history")
+        proxies = {t: p for t, p in proxies.items() if p in proxy_prices.columns}
     fx = proxy_prices[args.proxy_fx]
     prices, starts = splice_proxies(prices, {t: proxy_prices[p] for t, p in proxies.items()}, fx)
     if traded_value is not None:
@@ -982,6 +1008,64 @@ def _apply_proxies(
     for ticker, text in args.proxy_history.items():
         print(f"Proxy history: {ticker} <- {text}")
     return prices, traded_value
+
+
+def _finite_float(value: str) -> float:
+    number = float(value)
+    if not math.isfinite(number):
+        raise argparse.ArgumentTypeError(f"must be a finite number, got {value}")
+    return number
+
+
+def _non_negative_float(value: str) -> float:
+    number = _finite_float(value)
+    if number < 0:
+        raise argparse.ArgumentTypeError(f"must be >= 0, got {value}")
+    return number
+
+
+def _positive_float(value: str) -> float:
+    number = _finite_float(value)
+    if number <= 0:
+        raise argparse.ArgumentTypeError(f"must be > 0, got {value}")
+    return number
+
+
+def _unit_fraction(value: str) -> float:
+    number = _finite_float(value)
+    if not 0 < number <= 1:
+        raise argparse.ArgumentTypeError(f"must be in (0, 1], got {value}")
+    return number
+
+
+def _positive_int(value: str) -> int:
+    number = int(value)
+    if number < 1:
+        raise argparse.ArgumentTypeError(f"must be >= 1, got {value}")
+    return number
+
+
+def _non_negative_int(value: str) -> int:
+    number = int(value)
+    if number < 0:
+        raise argparse.ArgumentTypeError(f"must be >= 0, got {value}")
+    return number
+
+
+def _require_tickers(prices: pd.DataFrame, required: dict[str, str | None]) -> None:
+    """Stop when a benchmark, market filter or cash ETF the run depends on came back without data."""
+    missing = [f"{role} {ticker}" for role, ticker in required.items() if ticker and (ticker not in prices.columns or prices[ticker].dropna().empty)]
+    if missing:
+        raise SystemExit(f"No price data for required ticker(s): {', '.join(missing)}. Check the ticker or rerun with --refresh")
+
+
+def _required(args: argparse.Namespace, include_cash: bool) -> dict[str, str | None]:
+    required: dict[str, str | None] = {"benchmark": args.benchmark}
+    for number, ticker in enumerate(_risk_on_tickers(args) or (), 1):
+        required[f"market filter {number}"] = ticker
+    if include_cash:
+        required["cash"] = args.cash
+    return required
 
 
 def _parse_cash(value: str) -> str | None:

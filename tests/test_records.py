@@ -110,3 +110,16 @@ def test_weekly_history_with_edited_columns_is_not_overwritten(tmp_path) -> None
     with pytest.raises(ValueError, match="weekly_history.csv"):
         load_strategy_snapshot(path, pd.Timestamp("2026-10-02"), config_hash="h1", version=1)
     assert path.read_bytes() == before
+
+
+def test_reordered_or_extra_columns_stop_without_appending(tmp_path) -> None:
+    path = tmp_path / "signals.csv"
+    record_signal(path, selection("A"), META)
+    frame = pd.read_csv(path, dtype=str, keep_default_na=False)
+    frame = frame[list(reversed(frame.columns))]
+    frame["memo"] = "x"
+    frame.to_csv(path, index=False)  # edited in a spreadsheet: same columns, other order, one extra
+    before = path.read_bytes()
+    with pytest.raises(ValueError, match="signals.csv"):
+        record_signal(path, selection("A"), {**META, "config_hash": "fff000fff000"})
+    assert path.read_bytes() == before

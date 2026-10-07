@@ -1,7 +1,8 @@
 """Strategy files: one JSON per strategy that fixes every setting deciding which ETFs get picked.
 
 rank, weekly and backtest read the same file with --strategy, so their selection rule can't drift.
-config_hash identifies the exact rule (content-based, so a forgotten version bump still shows).
+config_hash identifies the exact rule: the file's content plus the universe file it points to, so a
+forgotten version bump or an edited universe (groups, enabled ETFs) still shows as a rule change.
 """
 
 from __future__ import annotations
@@ -51,9 +52,11 @@ class Strategy:
     path: str
 
 
-def strategy_hash(raw: dict) -> str:
+def strategy_hash(raw: dict, universe_bytes: bytes = b"") -> str:
     canonical = json.dumps(raw, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
-    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:12]
+    digest = hashlib.sha256(canonical.encode("utf-8"))
+    digest.update(hashlib.sha256(universe_bytes).digest())
+    return digest.hexdigest()[:12]
 
 
 def load_strategy(path: str | Path) -> Strategy:
@@ -139,7 +142,7 @@ def load_strategy(path: str | Path) -> Strategy:
         max_per_group=_int(selection["max_per_group"], 0, "selection.max_per_group", fail),
         risk_on_benchmark=selection["risk_on_benchmark"],
         risk_on_tickers=tickers,
-        config_hash=strategy_hash(raw),
+        config_hash=strategy_hash(raw, Path(raw["universe"]).read_bytes()),
         path=str(path),
     )
 

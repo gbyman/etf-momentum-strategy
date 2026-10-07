@@ -102,3 +102,11 @@ def test_broken_json_names_the_file(tmp_path, universe) -> None:
     path = write(tmp_path, json.dumps(valid(universe))[:-1] + ",}")
     with pytest.raises(StrategyError, match="s.json"):
         load_strategy(path)
+
+
+def test_editing_the_universe_file_changes_the_hash(tmp_path, universe) -> None:
+    path = write(tmp_path, valid(universe))
+    before = load_strategy(path).config_hash
+    with open(universe, "a") as f:
+        f.write("B,B,X,1\n")
+    assert load_strategy(path).config_hash != before

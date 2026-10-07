@@ -40,6 +40,8 @@ uv run etf-momentum rank --universe config/universe_kr_pension.csv \
 
 `--top-n`(기본 3), `--max-per-group`(기본 1, 0이면 제한 없음), `--risk-on-benchmark`(기본 끔), `--risk-on-ticker`. 비중은 출력하지 않습니다.
 
+`--benchmark`와 `--cash` ETF는 유니버스 파일에 있어도 랭킹 후보에서 제외됩니다. 벤치마크는 상대강도 비교용, 현금성 ETF는 대기 자산으로만 쓰입니다.
+
 ### 전략 파일로 실행 (권장)
 
 선정 규칙을 `config/strategies/<id>.json`에 고정해 두고 `--strategy`로 실행합니다. `rank`, `weekly`, `backtest`가 같은 규칙을 씁니다.
@@ -51,11 +53,10 @@ uv run etf-momentum weekly --strategy config/strategies/pension.json
 uv run etf-momentum backtest --strategy config/strategies/pension.json --start 2010-01-01 --transaction-cost-bps 10
 ```
 
-- 선정 규칙 옵션(`--top-n`, `--benchmark` 등)을 함께 주면 멈춥니다. 규칙을 바꾸려면 파일을 고치고 `version`을 올립니다. 파일 내용으로 만든 `config_hash`가 기록마다 남아, `version`을 올리지 않아도 규칙 변경이 드러납니다.
+- 선정 규칙 옵션(`--top-n`, `--benchmark` 등)을 함께 주면 멈춥니다. 규칙을 바꾸려면 파일을 고치고 `version`을 올립니다. 파일 내용과 그 파일이 가리키는 유니버스 CSV로 만든 `config_hash`가 기록마다 남아, `version`을 올리지 않거나 유니버스(그룹·포함 종목)만 고쳐도 규칙 변경이 드러납니다.
 - 기록은 `results/strategies/<id>/`에 쌓입니다.
   - `signals.csv`: `rank`를 실행할 때마다 직전 월말 선택을 기록합니다. 기존 행은 고치지 않습니다. 같은 월말·같은 규칙인데 결과가 다르면(데이터 수정 등) `revision`을 올려 추가합니다. `--end`로 과거를 조회하면 기록하지 않습니다.
   - `weekly_history.csv`: 같은 규칙의 기록끼리만 비교합니다. 규칙이 바뀌면 새 기준으로 시작합니다.
-`--benchmark`와 `--cash` ETF는 유니버스 파일에 있어도 랭킹 후보에서 제외됩니다. 벤치마크는 상대강도 비교용, 현금성 ETF는 대기 자산으로만 쓰입니다.
 한국 유니버스에서는 `--cash 153130.KS`를 함께 지정해야 단기채 ETF가 후보에서 빠집니다.
 화면에 표시되는 `return_1w`, `return_1m`, `return_3m`, `return_6m`, `return_12m`, `return_ytd`는 현재 기준 실제 기간 수익률입니다.
 `weighted_momentum`은 최근 1개월을 제외한 3/6/12개월 모멘텀 점수라서 기간 수익률과 용도가 다릅니다.

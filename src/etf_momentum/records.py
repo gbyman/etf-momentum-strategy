@@ -66,9 +66,9 @@ def _read(path: Path) -> pd.DataFrame:
         frame = pd.read_csv(path, dtype=str, keep_default_na=False)
     except (OSError, ValueError, pd.errors.ParserError) as exc:
         raise ValueError(f"Can't read {path}; not overwriting it ({exc})") from exc
-    missing = [c for c in SIGNAL_COLUMNS if c not in frame.columns]
-    if missing:
-        raise ValueError(f"{path} is missing columns {', '.join(missing)}; not overwriting it")
+    if list(frame.columns) != SIGNAL_COLUMNS:
+        # New rows are appended without a header in SIGNAL_COLUMNS order, so the file's header must match exactly.
+        raise ValueError(f"{path} columns differ from the expected {', '.join(SIGNAL_COLUMNS)}; not overwriting it")
     return frame
 
 

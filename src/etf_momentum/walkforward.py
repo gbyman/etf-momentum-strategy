@@ -23,8 +23,12 @@ def walk_forward(
     metric: str = "calmar",
     anchored: bool = False,
     min_coverage: float = 0.95,
+    risk_free: pd.Series | None = None,
 ) -> tuple[pd.Series, pd.DataFrame]:
-    """Return spliced out-of-sample daily returns and one row per test window."""
+    """Return spliced out-of-sample daily returns and one row per test window.
+
+    `risk_free` (daily returns, e.g. the cash ETF) makes the "sharpe" metric use excess returns,
+    the same definition summarize_performance reports."""
     if train_years < 1 or test_months < 1:
         raise ValueError(f"train_years and test_months must be positive, got {train_years} and {test_months}")
     if metric not in METRICS:
@@ -46,7 +50,7 @@ def walk_forward(
             continue
 
         covered = train.columns[train.notna().mean() >= min_coverage]
-        scores = pd.Series({column: score(train[column].dropna(), metric) for column in covered}, dtype=float)
+        scores = pd.Series({column: score(train[column].dropna(), metric, risk_free=risk_free) for column in covered}, dtype=float)
         scores = scores.dropna()  # +inf (gains with no drawdown/volatility) stays selectable
         if scores.empty:
             continue
@@ -80,7 +84,7 @@ def oos_equity(returns: pd.DataFrame, base_date: pd.Timestamp) -> pd.DataFrame:
     return pd.concat([base, equity])
 
 
-def score(daily_returns: pd.Series, metric: str) -> float:
+def score(daily_returns: pd.Series, metric: str, risk_free: pd.Series | None = None) -> float:
     """Training score. With zero drawdown (calmar) or zero volatility (sharpe) the ratio is
     +inf for gains and 0 for a flat series, so risk-free winners are preferred, never dropped."""
     if daily_returns.empty:
@@ -91,8 +95,9 @@ def score(daily_returns: pd.Series, metric: str) -> float:
     if metric == "cagr":
         return cagr
     if metric == "sharpe":
-        std = float(daily_returns.std())
-        mean = float(daily_returns.mean())
+        excess = daily_returns - (risk_free.reindex(daily_returns.index).fillna(0.0) if risk_free is not None else 0.0)
+        std = float(excess.std())
+        mean = float(excess.mean())
         if std > 1e-12:
             return mean / std * np.sqrt(TRADING_DAYS_PER_YEAR)
         return float(np.sign(mean) * np.inf) if mean else 0.0

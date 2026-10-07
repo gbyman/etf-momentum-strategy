@@ -722,6 +722,7 @@ def run_walkforward_command(args: argparse.Namespace) -> None:
         test_months=args.test_months,
         metric=args.metric,
         anchored=args.anchored,
+        risk_free=prices[args.cash].pct_change() if args.cash else None,
     )
     if windows.empty:
         raise SystemExit("Not enough history for a single walk-forward window; lower --train-years or use an earlier --start")

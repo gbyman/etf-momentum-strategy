@@ -11,7 +11,14 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from etf_momentum.backtest import ACCOUNTING_CHOICES, BacktestConfig, run_backtest, summarize_performance
+from etf_momentum.backtest import (
+    ACCOUNTING_CHOICES,
+    BacktestConfig,
+    previous_month_end,
+    run_backtest,
+    select_holdings,
+    summarize_performance,
+)
 from etf_momentum.data import (
     ACCOUNT_CHOICES,
     account_candidates,
@@ -36,6 +43,14 @@ def main() -> None:
     rank_parser = subparsers.add_parser("rank", help="Rank ETFs by momentum")
     _add_common_args(rank_parser)
     rank_parser.add_argument("--top", type=int, default=20, help="Number of rows to print")
+    rank_parser.add_argument("--top-n", type=int, default=3, help="ETFs to select (same rule as backtest)")
+    rank_parser.add_argument(
+        "--max-per-group", type=int, default=1, help="Max selected ETFs per universe 'group'; 0 disables the limit"
+    )
+    rank_parser.add_argument("--risk-on-benchmark", action="store_true", help="Select nothing when the market filter is off")
+    rank_parser.add_argument(
+        "--risk-on-ticker", default=None, help="Comma-separated market filter tickers (default: --benchmark)"
+    )
     rank_parser.set_defaults(func=run_rank_command)
 
     weekly_parser = subparsers.add_parser("weekly", help="Weekly leadership report against prior snapshot")
@@ -186,7 +201,7 @@ def main() -> None:
 def run_rank_command(args: argparse.Namespace) -> None:
     output_dir = ensure_output_dir(args.output_dir)
     members = load_universe(args.universe)
-    tickers = unique_tickers(members, extras=[args.benchmark])
+    tickers = unique_tickers(members, extras=[args.benchmark, *(_risk_on_tickers(args) or ())])
     start = _start_from_lookback_years(args.lookback_years)
     prices = _download(tickers, start, args)
     traded_value = _traded_value(tickers, start, args, prices)
@@ -217,8 +232,57 @@ def run_rank_command(args: argparse.Namespace) -> None:
     ]
     if args.min_avg_traded_value is not None:
         columns.insert(columns.index("eligible") + 1, "liquid")
+    print(f"[현재 순위] 기준일 {pd.Timestamp(ranking['as_of'].iloc[0]).date()} (최신 종가)")
     print(ranking[columns].head(args.top).to_string(index=False, float_format=lambda value: f"{value: .2%}"))
     print(f"\nSaved: {output_dir / 'latest_ranking.csv'}")
+
+    selection = _month_end_selection(members, prices, traded_value, config, args)
+    selection.to_csv(output_dir / "latest_selection.csv", index=False)
+    print(f"Saved: {output_dir / 'latest_selection.csv'}")
+
+
+def _month_end_selection(
+    members: list, prices: pd.DataFrame, traded_value: pd.DataFrame | None, config: MomentumConfig, args: argparse.Namespace
+) -> pd.DataFrame:
+    """Print and return the ETFs the strategy would hold after the previous month-end close."""
+    as_of = previous_month_end(prices.index)
+    ranking = rank_momentum(
+        prices, as_of, benchmark=args.benchmark, config=config, candidate_tickers=_candidates(members, args), traded_value=traded_value
+    )
+    rule = BacktestConfig(
+        top_n=args.top_n,
+        cash_ticker=args.cash,
+        benchmark=args.benchmark,
+        risk_on_benchmark=args.risk_on_benchmark,
+        risk_on_tickers=_risk_on_tickers(args),
+        momentum=config,
+        **_group_config(members, args),
+    )
+    picked = select_holdings(ranking, prices, as_of, rule)
+    names = {m.ticker: m.name for m in members}
+    groups = {m.ticker: m.group for m in members}
+    filters = ", ".join(_risk_on_tickers(args) or (args.benchmark,))
+
+    print(f"\n[선택 종목] 기준일 {as_of.date()} (직전 월말 종가), 상위 {args.top_n}개, 그룹당 최대 {args.max_per_group or '제한 없음'}")
+    if args.risk_on_benchmark:
+        print(f"시장 필터: {filters} 200일선 {'위 → 투자' if picked.risk_on else '아래 → 전액 현금'}")
+    rows: list[dict[str, object]] = []
+    for number, ticker in enumerate(picked.tickers, 1):
+        print(f" {number}. {ticker:<10} {names.get(ticker, ticker)}  {groups.get(ticker) or '-'}")
+        rows.append({"status": "selected", "ticker": ticker, "group": groups.get(ticker, "")})
+    if picked.empty_slots:
+        cash = args.cash or "미투자 현금"
+        print(f" 빈 자리 {picked.empty_slots}개 → 현금 ({cash})")
+        rows.append({"status": "cash", "ticker": args.cash or "", "slots": picked.empty_slots})
+    if picked.group_skipped:
+        skipped = ", ".join(f"{t} ({groups.get(t)})" for t in picked.group_skipped)
+        print(f" 그룹 제한으로 제외: {skipped}")
+        rows.extend({"status": "group_limit", "ticker": t, "group": groups.get(t, "")} for t in picked.group_skipped)
+    frame = pd.DataFrame(rows, columns=["status", "ticker", "group", "slots"])
+    frame.insert(0, "as_of", str(as_of.date()))
+    frame["name"] = frame["ticker"].map(lambda t: names.get(t, t))
+    frame["risk_on"] = picked.risk_on
+    return frame
 
 
 def run_weekly_command(args: argparse.Namespace) -> None:

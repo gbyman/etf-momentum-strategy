@@ -14,7 +14,8 @@
 uv run pytest                                  # 전체 테스트
 uv run etf-momentum rank --universe config/universe_kr_pension.csv \
   --benchmark 069500.KS --cash 153130.KS --account pension \
-  --lookback-years 3 --min-avg-traded-value 1e9 --top 15   # 현재 모멘텀 ETF 순위
+  --lookback-years 3 --min-avg-traded-value 1e9 --top 15 \
+  --top-n 4 --max-per-group 1 --risk-on-benchmark      # 현재 순위 + 직전 월말 기준 선택 종목
 uv run python scripts/research_tables.py --end 2025-02-28  # 연구 문서 표 재생성
 ```
 

@@ -28,6 +28,17 @@ uv run etf-momentum rank \
 ```
 
 결과 CSV는 `results/latest_ranking.csv`에 저장됩니다.
+
+순위 표 아래에는 **직전 월말 종가 기준으로 실제 선택될 ETF**가 함께 나옵니다. 백테스트와 같은 규칙(시장 필터 → 그룹 제한 → 상위 N개)을 쓰며, 결과는 `results/latest_selection.csv`(`selected` / `group_limit` / `cash`)에 저장됩니다. 직전 월말은 이미 끝난 가장 최근 달의 마지막 거래일입니다(10월 7일에 실행하면 9월 말). 선택 규칙 옵션은 백테스트와 같습니다.
+
+```bash
+uv run etf-momentum rank --universe config/universe_kr_pension.csv \
+  --benchmark 069500.KS --cash 153130.KS --account pension \
+  --lookback-years 3 --min-avg-traded-value 1e9 \
+  --top-n 4 --max-per-group 1 --risk-on-benchmark
+```
+
+`--top-n`(기본 3), `--max-per-group`(기본 1, 0이면 제한 없음), `--risk-on-benchmark`(기본 끔), `--risk-on-ticker`. 비중은 출력하지 않습니다.
 `--benchmark`와 `--cash` ETF는 유니버스 파일에 있어도 랭킹 후보에서 제외됩니다. 벤치마크는 상대강도 비교용, 현금성 ETF는 대기 자산으로만 쓰입니다.
 한국 유니버스에서는 `--cash 153130.KS`를 함께 지정해야 단기채 ETF가 후보에서 빠집니다.
 화면에 표시되는 `return_1w`, `return_1m`, `return_3m`, `return_6m`, `return_12m`, `return_ytd`는 현재 기준 실제 기간 수익률입니다.

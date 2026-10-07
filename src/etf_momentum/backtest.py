@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import numpy as np
 import pandas as pd
@@ -259,6 +259,45 @@ def _trading_metrics(positions: pd.DataFrame, equity: pd.DataFrame) -> dict[str,
     }
 
 
+@dataclass(frozen=True)
+class Selection:
+    """Which ETFs the strategy holds after a rebalance (weights aside)."""
+
+    risk_on: bool
+    tickers: list[str] = field(default_factory=list)
+    group_skipped: list[str] = field(default_factory=list)  # eligible, but their group was already full
+    empty_slots: int = 0  # of top_n, left in cash
+
+
+def select_holdings(
+    ranking: pd.DataFrame, prices: pd.DataFrame, rebalance_date: pd.Timestamp, config: BacktestConfig
+) -> Selection:
+    """Market filter, then eligible tickers in rank order under the group limit, up to top_n.
+
+    The backtest and the rank command both use this, so their picks follow the same rules.
+    """
+    risk_on = True
+    if config.risk_on_benchmark:
+        filters = [t for t in (config.risk_on_tickers or (config.benchmark,)) if t in prices.columns]
+        if filters:
+            risk_on = any(_above_sma(prices.loc[:rebalance_date, t], config.momentum.sma_window) for t in filters)
+    if not risk_on or ranking.empty:
+        return Selection(risk_on=risk_on, empty_slots=config.top_n)
+    picked, skipped = _pick_tickers(ranking, config)
+    return Selection(risk_on=True, tickers=picked, group_skipped=skipped, empty_slots=config.top_n - len(picked))
+
+
+def previous_month_end(dates: pd.DatetimeIndex, today: pd.Timestamp | None = None) -> pd.Timestamp:
+    """Last date in `dates` that falls in the most recent calendar month already over by `today`."""
+    today = pd.Timestamp(today or pd.Timestamp.today()).normalize()
+    dates = pd.DatetimeIndex(dates).sort_values()
+    month_over = (dates.to_period("M").to_timestamp(how="end").normalize()) < today
+    completed = dates[month_over]
+    if completed.empty:
+        raise ValueError(f"No completed month in the data before {today.date()}")
+    return completed[-1]
+
+
 def _select_weights(
     ranking: pd.DataFrame,
     prices: pd.DataFrame,
@@ -266,16 +305,8 @@ def _select_weights(
     config: BacktestConfig,
 ) -> pd.Series:
     weights = pd.Series(0.0, index=prices.columns)
-    risk_on = True
-    if config.risk_on_benchmark:
-        filters = [t for t in (config.risk_on_tickers or (config.benchmark,)) if t in prices.columns]
-        if filters:
-            risk_on = any(_above_sma(prices.loc[:rebalance_date, t], config.momentum.sma_window) for t in filters)
-
-    if not risk_on:
-        return _cash_weights(weights, config)
-
-    selected = _pick_tickers(ranking, config) if not ranking.empty else []
+    selection = select_holdings(ranking, prices, rebalance_date, config)
+    selected = selection.tickers
     if not selected:
         return _cash_weights(weights, config)
 
@@ -288,20 +319,24 @@ def _select_weights(
     return _cash_weights(weights, config, 1.0 - float(selected_weights.sum()))
 
 
-def _pick_tickers(ranking: pd.DataFrame, config: BacktestConfig) -> list[str]:
-    """Take eligible tickers in rank order, skipping any whose group already holds max_per_group names."""
+def _pick_tickers(ranking: pd.DataFrame, config: BacktestConfig) -> tuple[list[str], list[str]]:
+    """Take eligible tickers in rank order, skipping any whose group already holds max_per_group names.
+
+    Returns (picked, skipped for the group limit before the slots filled up)."""
     groups = config.groups or {}
     picked: list[str] = []
+    skipped: list[str] = []
     group_counts: dict[str, int] = {}
-    for ticker in ranking.loc[ranking["eligible"], "ticker"]:
+    for ticker in ranking.loc[ranking["eligible"].astype(bool), "ticker"]:
         group = groups.get(ticker) or ticker
         if config.max_per_group is not None and group_counts.get(group, 0) >= config.max_per_group:
+            skipped.append(ticker)
             continue
         picked.append(ticker)
         group_counts[group] = group_counts.get(group, 0) + 1
         if len(picked) == config.top_n:
             break
-    return picked
+    return picked, skipped
 
 
 def _selected_weights(ranking: pd.DataFrame, selected: list[str], config: BacktestConfig) -> pd.Series:

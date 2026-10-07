@@ -120,7 +120,8 @@ Sharpe의 무위험 수익률은 현금 ETF(153130, BIL) 수익률이다.
 ```bash
 uv run etf-momentum rank --universe config/universe_kr_pension.csv \
   --benchmark 069500.KS --cash 153130.KS --account pension \
-  --lookback-years 3 --min-avg-traded-value 1e9 --top 15
+  --lookback-years 3 --min-avg-traded-value 1e9 --top 15 \
+  --top-n 4 --max-per-group 1 --risk-on-benchmark
 ```
 
 IRP·DC는 S&P500도 위험자산이라 핵심·보조를 합친 위험자산이 70%를 넘지 않게 맞춰야 한다. 이 조합 계산은 아직 하지 않았다. 모멘텀 단독의 70% 상한은 리밸런싱 시점에만 적용하며, 월중 가격 상승으로 70%를 넘을 수 있다.

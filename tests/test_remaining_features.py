@@ -32,3 +32,28 @@ def test_walk_forward_picks_by_excess_sharpe_when_risk_free_given() -> None:
     _, excess = walk_forward(returns, train_years=3, test_months=12, metric="sharpe", risk_free=rf)
     assert set(raw["selected"]) == {"B"}  # raw return/vol favours the calm series
     assert set(excess["selected"]) == {"A"}  # excess over cash favours A, as the report does
+
+
+# 3-2. a foreign (previous_close) sleeve that goes stale and later resumes is an error, not a silent skip
+from etf_momentum.portfolio import sleeve_returns_on_calendar  # noqa: E402
+
+
+def test_previous_close_gap_then_resume_is_an_error() -> None:
+    calendar = pd.bdate_range("2021-01-01", periods=20)
+    foreign = pd.Series([100.0, 100.0, 200.0, 200.0, 200.0], index=calendar[[0, 1, 12, 13, 19]])
+    with pytest.raises(ValueError, match="gap"):
+        sleeve_returns_on_calendar(foreign, calendar, "previous_close")
+
+
+def test_previous_close_permanent_end_still_ends_the_sleeve() -> None:
+    calendar = pd.bdate_range("2021-01-01", periods=20)
+    foreign = pd.Series([100.0, 110.0], index=calendar[:2])
+    returns = sleeve_returns_on_calendar(foreign, calendar, "previous_close")
+    assert returns.iloc[-1:].isna().all()
+
+
+def test_previous_close_short_holiday_is_fine() -> None:
+    calendar = pd.bdate_range("2021-01-04", periods=10)
+    foreign = pd.Series(range(100, 109), index=calendar.delete(4), dtype=float)  # one foreign holiday
+    returns = sleeve_returns_on_calendar(foreign, calendar, "previous_close")
+    assert returns.dropna().size == 9

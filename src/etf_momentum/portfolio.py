@@ -75,11 +75,27 @@ def sleeve_returns_on_calendar(
         values = _asof_values(curve, calendar, strictly_before=True, max_stale_days=max_stale_days)
         if fx is not None:
             values = values * _asof_values(fx, calendar, strictly_before=True, max_stale_days=max_stale_days)
+    _reject_internal_gaps(values, curve.name, max_stale_days)
     returns = values.pct_change(fill_method=None)
     first = values.first_valid_index()
     if first is not None:
         returns.loc[first] = 0.0
     return returns.rename(curve.name)
+
+
+def _reject_internal_gaps(values: pd.Series, name: object, max_stale_days: int) -> None:
+    """A stale stretch followed by new data is an error: dropping it would lose the return earned
+    across the gap. Before the first and after the last value is warm-up or the sleeve's end."""
+    valid = values.notna()
+    if not valid.any():
+        return
+    inside = values.loc[values.first_valid_index() : values.last_valid_index()]
+    if inside.isna().any():
+        gap = inside[inside.isna()].index
+        raise ValueError(
+            f"Sleeve {name!r} has a data gap from {gap[0].date()} to {gap[-1].date()} "
+            f"(no new value for more than {max_stale_days} days, then data resumes)"
+        )
 
 
 def _same_day_values(curve: pd.Series, calendar: pd.DatetimeIndex) -> pd.Series:

@@ -32,7 +32,8 @@ from etf_momentum.data import (
     unique_tickers,
 )
 from etf_momentum.portfolio import PortfolioConfig, annualized_cost, run_portfolio, sleeve_returns_on_calendar
-from etf_momentum.reporting import ensure_output_dir, save_equity_chart, save_json, save_run_metadata
+from etf_momentum.records import record_signal
+from etf_momentum.reporting import _code_revision, ensure_output_dir, save_equity_chart, save_json, save_run_metadata
 from etf_momentum.strategy import Strategy, StrategyError, load_strategy
 from etf_momentum.signals import LIQUIDITY_MAX_STALE_DAYS, RANK_BY_CHOICES, MomentumConfig, rank_momentum
 from etf_momentum.walkforward import METRICS, oos_equity, walk_forward
@@ -270,11 +271,46 @@ def run_rank_command(args: argparse.Namespace) -> None:
     selection = _month_end_selection(members, prices, traded_value, config, args)
     selection.to_csv(output_dir / "latest_selection.csv", index=False)
     print(f"Saved: {output_dir / 'latest_selection.csv'}")
+    strategy = getattr(args, "strategy_info", None)
+    if strategy is not None:
+        _record_month_end_signal(output_dir, strategy, selection, prices, args)
 
 
 def _selection_today(args: argparse.Namespace) -> pd.Timestamp | None:
     """With --end (exclusive download end), the previous month-end is judged as of that date."""
     return pd.Timestamp(args.end) if args.end else None
+
+
+def _record_month_end_signal(
+    output_dir: Path, strategy: Strategy, selection: pd.DataFrame, prices: pd.DataFrame, args: argparse.Namespace
+) -> None:
+    if args.end:
+        print("과거 기준일 조회라 신호를 기록하지 않습니다 (--end)")
+        return
+    revision = _code_revision() or {}
+    meta = {
+        "signal_date": selection["as_of"].iloc[0],
+        "recorded_at": pd.Timestamp.now(tz="Asia/Seoul").isoformat(timespec="seconds"),
+        "strategy_id": strategy.id,
+        "version": strategy.version,
+        "config_hash": strategy.config_hash,
+        "code_commit": revision.get("commit", ""),
+        "code_dirty": revision.get("dirty", ""),
+        "price_last_date": str(pd.Timestamp(prices.index[-1]).date()),
+    }
+    path = output_dir / "strategies" / strategy.id / "signals.csv"
+    try:
+        result = record_signal(path, selection, meta)
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
+    if result.action == "added":
+        print(f"신호 기록: {meta['signal_date']} (버전 {strategy.version}, {strategy.config_hash}) → {path}")
+    elif result.action == "unchanged":
+        print(f"이미 기록됨: {meta['signal_date']} (revision {result.revision})")
+    else:
+        print(f"WARNING: 같은 월말·같은 규칙인데 결과가 달라 revision {result.revision}로 추가했습니다")
+        for change in result.changes:
+            print(f"  {change}")
 
 
 def _month_end_selection(
@@ -308,7 +344,7 @@ def _month_end_selection(
     rows: list[dict[str, object]] = []
     for number, ticker in enumerate(picked.tickers, 1):
         print(f" {number}. {ticker:<10} {names.get(ticker, ticker)}  {groups.get(ticker) or '-'}")
-        rows.append({"status": "selected", "ticker": ticker, "group": groups.get(ticker, "")})
+        rows.append({"status": "selected", "rank_in_selection": number, "ticker": ticker, "group": groups.get(ticker, "")})
     if picked.empty_slots:
         cash = args.cash or "미투자 현금"
         print(f" 빈 자리 {picked.empty_slots}개 → 현금 ({cash})")
@@ -317,10 +353,11 @@ def _month_end_selection(
         skipped = ", ".join(f"{t} ({groups.get(t)})" for t in picked.group_skipped)
         print(f" 그룹 제한으로 제외: {skipped}")
         rows.extend({"status": "group_limit", "ticker": t, "group": groups.get(t, "")} for t in picked.group_skipped)
-    frame = pd.DataFrame(rows, columns=["status", "ticker", "group", "slots"])
+    frame = pd.DataFrame(rows, columns=["status", "rank_in_selection", "ticker", "group", "slots"])
     frame.insert(0, "as_of", str(as_of.date()))
     frame["name"] = frame["ticker"].map(lambda t: names.get(t, t))
     frame["risk_on"] = picked.risk_on
+    frame["market_filter"] = ("on" if picked.risk_on else "off") if args.risk_on_benchmark else "unused"
     return frame
 
 

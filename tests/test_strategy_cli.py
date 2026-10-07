@@ -114,3 +114,24 @@ def test_without_strategy_commands_behave_as_before(tmp_path, monkeypatch, offli
         "--top-n", "2", "--output-dir", str(tmp_path / "plain"))
     assert (tmp_path / "plain" / "latest_selection.csv").exists()
     assert not (tmp_path / "plain" / "strategies").exists()
+
+
+def test_rank_with_strategy_records_signal_once(tmp_path, monkeypatch, offline) -> None:
+    path = strategy_file(tmp_path)
+    out = tmp_path / "out"
+    run(monkeypatch, "rank", "--strategy", path, "--output-dir", str(out))
+    signals = out / "strategies" / "test" / "signals.csv"
+    first = pd.read_csv(signals, dtype=str, keep_default_na=False)
+    assert set(first["signal_date"]) == {"2026-09-30"}
+    assert first.loc[first["status"] == "selected", "ticker"].tolist() == ["A", "C"]
+    assert set(first["market_filter"]) == {"on"}
+    before = signals.read_bytes()
+    run(monkeypatch, "rank", "--strategy", path, "--output-dir", str(out))
+    assert signals.read_bytes() == before  # same month, same rule, same result
+
+
+def test_rank_with_past_end_date_does_not_record(tmp_path, monkeypatch, offline, capsys) -> None:
+    out = tmp_path / "out"
+    run(monkeypatch, "rank", "--strategy", strategy_file(tmp_path), "--end", "2026-09-15", "--output-dir", str(out))
+    assert not (out / "strategies" / "test" / "signals.csv").exists()
+    assert "기록하지 않습니다" in capsys.readouterr().out

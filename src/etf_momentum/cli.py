@@ -256,8 +256,9 @@ def main() -> None:
 def run_rank_command(args: argparse.Namespace) -> None:
     output_dir = ensure_output_dir(args.output_dir)
     members = load_universe(args.universe)
+    _validate_cash(members, args)
     tickers = unique_tickers(members, extras=[args.benchmark, *(_risk_on_tickers(args) or ())])
-    start = _start_from_lookback_years(args.lookback_years)
+    start = _start_from_lookback_years(args.lookback_years, args.end)
     prices = _download(tickers, start, args)
     traded_value = _traded_value(tickers, start, args, prices)
     prices, traded_value = _apply_proxies(members, prices, traded_value, start, args)
@@ -392,13 +393,13 @@ def _month_end_selection(
 
     print(f"\n[선택 종목] 기준일 {as_of.date()} (직전 월말 종가), 상위 {args.top_n}개, 그룹당 최대 {args.max_per_group or '제한 없음'}")
     if args.risk_on_benchmark:
-        print(f"시장 필터: {filters} 200일선 {'위 → 투자' if picked.risk_on else '아래 → 전액 현금'}")
+        print(f"시장 필터: {filters} {args.sma_window}일선 {'위 → 투자' if picked.risk_on else '아래 → 전액 현금'}")
     rows: list[dict[str, object]] = []
     for number, ticker in enumerate(picked.tickers, 1):
         m = metrics.loc[ticker]
         print(
             f" {number}. {ticker:<10} {names.get(ticker, ticker)}  {groups.get(ticker) or '-'}"
-            f"  | 순위 {int(m['rank'])}, 점수 {m['weighted_momentum']:.1%}, 200일선 {m['trend_strength_vs_sma']:+.1%}"
+            f"  | 순위 {int(m['rank'])}, {_score_text(m, args.rank_by)}, {args.sma_window}일선 {m['trend_strength_vs_sma']:+.1%}"
             f"{_traded_value_text(m['avg_traded_value'])}"
         )
         rows.append({"status": "selected", "rank_in_selection": number, "ticker": ticker, "group": groups.get(ticker, "")})
@@ -418,7 +419,9 @@ def _month_end_selection(
     cutoff = int(metrics.loc[picked.tickers, "rank"].max()) if picked.tickers else args.top_n
     passed_over = ranking[(ranking["rank"] <= cutoff) & ~ranking["eligible"].astype(bool)].sort_values("rank")
     if not passed_over.empty:
-        reasons = {row.ticker: _exclusion_reason(pd.Series(row._asdict())) for row in passed_over.itertuples(index=False)}
+        reasons = {
+            row.ticker: _exclusion_reason(pd.Series(row._asdict()), args.sma_window) for row in passed_over.itertuples(index=False)
+        }
         print(" 상위 후보 중 제외: " + ", ".join(f"{t} ({r})" for t, r in reasons.items()))
         rows.extend({"status": "excluded", "ticker": t, "group": groups.get(t, ""), "reason": r} for t, r in reasons.items())
     frame = pd.DataFrame(rows, columns=["status", "rank_in_selection", "ticker", "group", "slots", "reason"])
@@ -433,7 +436,7 @@ def _month_end_selection(
 
 EXCLUSION_CHECKS = (
     ("positive_momentum", "모멘텀≤0"),
-    ("above_sma", "200일선 아래"),
+    ("above_sma", "{sma}일선 아래"),
     ("relative_ok", "상대강도 미달"),
     ("liquid", "유동성 부족"),
     ("volatility_ok", "변동성 계산 불가"),
@@ -441,8 +444,17 @@ EXCLUSION_CHECKS = (
 )
 
 
-def _exclusion_reason(row: pd.Series) -> str:
-    return ", ".join(label for column, label in EXCLUSION_CHECKS if column in row and not bool(row[column]))
+def _exclusion_reason(row: pd.Series, sma_window: int = 200) -> str:
+    return ", ".join(
+        label.format(sma=sma_window) for column, label in EXCLUSION_CHECKS if column in row and not bool(row[column])
+    )
+
+
+def _score_text(metrics: pd.Series, rank_by: str) -> str:
+    """The score that actually ordered the ranking."""
+    if rank_by == "risk_adjusted_score":
+        return f"위험조정 점수 {metrics['risk_adjusted_score']:.2f}"
+    return f"점수 {metrics['weighted_momentum']:.1%}"
 
 
 def _traded_value_text(value: object) -> str:
@@ -457,12 +469,13 @@ def _traded_value_text(value: object) -> str:
 def run_weekly_command(args: argparse.Namespace) -> None:
     output_dir = ensure_output_dir(args.output_dir)
     members = load_universe(args.universe)
+    _validate_cash(members, args)
     tickers = unique_tickers(members, extras=[args.benchmark])
-    start = _start_from_lookback_years(args.lookback_years)
+    start = _start_from_lookback_years(args.lookback_years, args.end)
     prices = _download(tickers, start, args)
     traded_value = _traded_value(tickers, start, args, prices)
     prices, traded_value = _apply_proxies(members, prices, traded_value, start, args)
-    _require_tickers(prices, _required(args, include_cash=False))
+    _require_tickers(prices, _required(args, include_cash=False, include_filters=False))
     save_run_metadata(output_dir, args, prices, traded_value=traded_value, execution=_execution_note(args))
     config = _momentum_config_from_args(args)
     ranking = rank_momentum(prices, benchmark=args.benchmark, config=config, candidate_tickers=_candidates(members, args), traded_value=traded_value)
@@ -534,6 +547,7 @@ def run_weekly_command(args: argparse.Namespace) -> None:
 def run_backtest_command(args: argparse.Namespace) -> None:
     output_dir = ensure_output_dir(args.output_dir)
     members = load_universe(args.universe)
+    _validate_cash(members, args)
     tickers = unique_tickers(members, extras=[args.benchmark, args.cash, *(_risk_on_tickers(args) or ())])
     prices = _download(tickers, args.start, args)
     traded_value = _traded_value(tickers, args.start, args, prices)
@@ -585,6 +599,7 @@ def run_backtest_command(args: argparse.Namespace) -> None:
 def run_compare_command(args: argparse.Namespace) -> None:
     output_dir = ensure_output_dir(args.output_dir)
     members = load_universe(args.universe)
+    _validate_cash(members, args)
     tickers = unique_tickers(members, extras=[args.benchmark, args.cash, *(_risk_on_tickers(args) or ())])
     prices = _download(tickers, args.start, args)
     traded_value = _traded_value(tickers, args.start, args, prices)
@@ -720,6 +735,7 @@ def run_compare_command(args: argparse.Namespace) -> None:
 def run_walkforward_command(args: argparse.Namespace) -> None:
     output_dir = ensure_output_dir(args.output_dir)
     members = load_universe(args.universe)
+    _validate_cash(members, args)
     tickers = unique_tickers(members, extras=[args.benchmark, args.cash, *(_risk_on_tickers(args) or ())])
     prices = _download(tickers, args.start, args)
     traded_value = _traded_value(tickers, args.start, args, prices)
@@ -972,7 +988,10 @@ def run_portfolio_command(args: argparse.Namespace) -> None:
                 borrow_rate=spec.get("borrow_rate", 0.07),
                 rebalance_cost_bps=spec.get("rebalance_cost_bps", 0.0),
             )
-            equity, history = run_portfolio(returns, config, cash_returns=cash_returns)
+            try:
+                equity, history = run_portfolio(returns, config, cash_returns=cash_returns)
+            except ValueError as exc:
+                raise SystemExit(f"Scenario {name!r}: {exc}") from exc
             curves[name] = equity
             for start, end in spec.get("periods", [[None, None]]):
                 window = equity.loc[start:end]
@@ -1185,21 +1204,32 @@ def _risk_on_tickers(args: argparse.Namespace) -> tuple[str, ...] | None:
 def _safe_tickers(members: list, args: argparse.Namespace) -> tuple[str, ...]:
     """Universe members marked risk_asset=0. With a risky-asset cap, the cash ETF must be one of them
     when it is in the universe (otherwise the 'safe' remainder would itself be a risk asset)."""
-    safe = tuple(m.ticker for m in members if not m.risk_asset)
+    _validate_cash(members, args)
+    return tuple(m.ticker for m in members if not m.risk_asset)
+
+
+def _validate_cash(members: list, args: argparse.Namespace) -> None:
+    """The cash ETF must be usable in the account: checked by every command before downloading.
+
+    For pension / retirement accounts or a risky-asset cap it must be an enabled universe member;
+    with a cap (retirement included) it must be a safe asset; and it must be allowed in the account."""
+    if not args.cash:
+        return
     capped = _max_risky_weight(args) < 1.0 or args.account == "retirement"
-    if not capped or not args.cash:
-        return safe
+    if not capped and args.account == "all":
+        return
     cash = next((m for m in members if m.ticker == args.cash), None)
     if cash is None:
         raise SystemExit(
-            f"--cash {args.cash} is not an enabled member of the universe, so it can't be checked as a safe, "
-            "account-eligible asset; add it with risk_asset=0"
+            f"--cash {args.cash} is not an enabled member of the universe, so it can't be checked for the "
+            f"{args.account} account; add it (enabled=1, risk_asset=0)"
         )
-    if cash.risk_asset:
+    if capped and cash.risk_asset:
         raise SystemExit(f"--cash {args.cash} is marked risk_asset=1; a risky-asset cap needs a safe cash ETF")
     if args.account == "retirement" and not cash.retirement_ok:
         raise SystemExit(f"--cash {args.cash} is not allowed in retirement accounts (retirement_ok=0)")
-    return safe
+    if args.account == "pension" and not cash.pension_ok:
+        raise SystemExit(f"--cash {args.cash} is not allowed in pension accounts (pension_ok=0)")
 
 
 def _max_risky_weight(args: argparse.Namespace) -> float:
@@ -1284,9 +1314,9 @@ def _require_tickers(prices: pd.DataFrame, required: dict[str, str | None]) -> N
         raise SystemExit(f"No price data for required ticker(s): {', '.join(missing)}. Check the ticker or rerun with --refresh")
 
 
-def _required(args: argparse.Namespace, include_cash: bool) -> dict[str, str | None]:
+def _required(args: argparse.Namespace, include_cash: bool, include_filters: bool = True) -> dict[str, str | None]:
     required: dict[str, str | None] = {"benchmark": args.benchmark}
-    for number, ticker in enumerate(_risk_on_tickers(args) or (), 1):
+    for number, ticker in enumerate((_risk_on_tickers(args) or ()) if include_filters else (), 1):
         required[f"market filter {number}"] = ticker
     if include_cash:
         required["cash"] = args.cash
@@ -1328,8 +1358,10 @@ def _attach_names(ranking: pd.DataFrame, members: list) -> pd.DataFrame:
     return ranking
 
 
-def _start_from_lookback_years(years: int) -> str:
-    return (date.today() - timedelta(days=max(years, 1) * 366)).isoformat()
+def _start_from_lookback_years(years: int, end: str | None = None) -> str:
+    """Download start for rank/weekly: lookback years before --end (a past lookup) or before today."""
+    base = pd.Timestamp(end).date() if end else date.today()
+    return (base - timedelta(days=max(years, 1) * 366)).isoformat()
 
 
 def _parse_str_list(value: str) -> list[str]:

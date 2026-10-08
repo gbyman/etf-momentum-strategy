@@ -145,12 +145,26 @@ def annualized_cost(history: pd.DataFrame, window: pd.DatetimeIndex) -> float:
     return float(inside["cost"].sum()) / years
 
 
+def _validate_config(config: PortfolioConfig) -> None:
+    """Long-only sleeve weights; finite leverage, borrowing rate and cost."""
+    for name, weight in config.weights.items():
+        if not np.isfinite(weight) or weight < 0:
+            raise ValueError(f"Sleeve weight for {name} must be a finite number >= 0 (long only), got {weight}")
+    if not np.isfinite(config.leverage) or config.leverage <= 0:
+        raise ValueError(f"leverage must be a finite number > 0, got {config.leverage}")
+    if not np.isfinite(config.borrow_rate) or config.borrow_rate < 0:
+        raise ValueError(f"borrow_rate must be a finite number >= 0, got {config.borrow_rate}")
+    if not np.isfinite(config.rebalance_cost_bps) or config.rebalance_cost_bps < 0:
+        raise ValueError(f"rebalance_cost_bps must be a finite number >= 0, got {config.rebalance_cost_bps}")
+
+
 def run_portfolio(
     returns: pd.DataFrame,
     config: PortfolioConfig,
     cash_returns: pd.Series | None = None,
 ) -> tuple[pd.Series, pd.DataFrame]:
     """Return (portfolio value series starting at 1.0, one row per rebalance)."""
+    _validate_config(config)
     if abs(sum(config.weights.values()) - 1.0) > 1e-9:
         raise ValueError(f"Sleeve weights must sum to 1, got {sum(config.weights.values()):.4f}")
     missing = set(config.weights) - set(returns.columns)

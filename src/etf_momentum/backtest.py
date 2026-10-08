@@ -120,7 +120,7 @@ def run_backtest(
             {
                 "rebalance_date": rebalance_date,
                 "trade_date": prices.index[trade_pos],
-                "hold_until": next_rebalance_date,
+                "hold_until": prices.index[end_pos],
                 "tickers": ",".join(selected),
                 "weights": ",".join(f"{ticker}:{weights[ticker]:.4f}" for ticker in selected),
                 "turnover": turnover,

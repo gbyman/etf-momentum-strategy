@@ -162,3 +162,27 @@ def test_initial_cost_stays_in_the_curve() -> None:
     equity, history = run_portfolio(pd.DataFrame({"A": [0.0, 0.0]}, index=index), PortfolioConfig({"A": 1.0}, rebalance_cost_bps=100))
     assert equity.tolist() == pytest.approx([1.0, 0.99])
     assert history["cost"].tolist() == pytest.approx([0.01])
+
+
+# F01/F04: one selection run uses one market's tickers; mixing Korean and US closes on one date
+# index looks ahead (US close of the same date) and changes lookback windows (extra rows).
+@pytest.mark.parametrize(
+    "extra",
+    [
+        ["--benchmark", "SPY"],  # Korean universe, forgotten --benchmark default
+        ["--risk-on-benchmark", "--risk-on-ticker", "SPY"],
+        ["--cash", "BIL"],
+    ],
+)
+def test_mixed_market_selection_stops_before_downloading(extra, tmp_path, monkeypatch) -> None:
+    (tmp_path / "u.csv").write_text("ticker,name,category,enabled\n069500.KS,K200,X,1\n091160.KS,Semi,X,1\n153130.KS,Cash,Cash,1\n")
+    monkeypatch.setattr(cli, "download_prices", lambda *a, **k: pytest.fail("should not download"))
+    base = ["--universe", str(tmp_path / "u.csv"), "--benchmark", "069500.KS", "--cash", "153130.KS"]
+    monkeypatch.setattr(sys, "argv", ["etf-momentum", "rank", *base, *extra, "--output-dir", str(tmp_path / "o")])
+    with pytest.raises(SystemExit, match="SPY|BIL"):
+        cli.main()
+
+
+def test_market_of_a_ticker() -> None:
+    assert cli._market("069500.KS") == cli._market("229200.KQ") == "KR"
+    assert cli._market("SPY") == cli._market("BIL") == "US"

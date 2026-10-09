@@ -261,6 +261,7 @@ def run_rank_command(args: argparse.Namespace) -> None:
     members = load_universe(args.universe)
     _validate_cash(members, args)
     tickers = unique_tickers(members, extras=[args.benchmark, args.cash, *(_risk_on_tickers(args) or ())])
+    _require_one_market(tickers)
     start = _start_from_lookback_years(args.lookback_years, args.end)
     prices, raw = _download(tickers, start, args)
     traded_value = _traded_value(tickers, start, args, prices)
@@ -492,6 +493,7 @@ def run_weekly_command(args: argparse.Namespace) -> None:
     members = load_universe(args.universe)
     _validate_cash(members, args)
     tickers = unique_tickers(members, extras=[args.benchmark])
+    _require_one_market(tickers)
     start = _start_from_lookback_years(args.lookback_years, args.end)
     prices, raw = _download(tickers, start, args)
     traded_value = _traded_value(tickers, start, args, prices)
@@ -574,6 +576,7 @@ def run_backtest_command(args: argparse.Namespace) -> None:
     members = load_universe(args.universe)
     _validate_cash(members, args)
     tickers = unique_tickers(members, extras=[args.benchmark, args.cash, *(_risk_on_tickers(args) or ())])
+    _require_one_market(tickers)
     prices, raw = _download(tickers, args.start, args)
     traded_value = _traded_value(tickers, args.start, args, prices)
     prices, traded_value = _apply_proxies(members, prices, traded_value, args.start, args)
@@ -629,6 +632,7 @@ def run_compare_command(args: argparse.Namespace) -> None:
     members = load_universe(args.universe)
     _validate_cash(members, args)
     tickers = unique_tickers(members, extras=[args.benchmark, args.cash, *(_risk_on_tickers(args) or ())])
+    _require_one_market(tickers)
     prices, raw = _download(tickers, args.start, args)
     traded_value = _traded_value(tickers, args.start, args, prices)
     prices, traded_value = _apply_proxies(members, prices, traded_value, args.start, args)
@@ -769,6 +773,7 @@ def run_walkforward_command(args: argparse.Namespace) -> None:
     members = load_universe(args.universe)
     _validate_cash(members, args)
     tickers = unique_tickers(members, extras=[args.benchmark, args.cash, *(_risk_on_tickers(args) or ())])
+    _require_one_market(tickers)
     prices, raw = _download(tickers, args.start, args)
     traded_value = _traded_value(tickers, args.start, args, prices)
     prices, traded_value = _apply_proxies(members, prices, traded_value, args.start, args)
@@ -1433,6 +1438,28 @@ def _month_end_sessions(benchmark: str, today: pd.Timestamp) -> pd.DatetimeIndex
         print(f"거래소 달력이 {month}을(를) 다루지 않아 기존 월말 규칙으로 판단합니다")
         return None
     return sessions
+
+
+def _market(ticker: str) -> str:
+    """KR for Korea Exchange tickers (.KS/.KQ); every other ticker is treated as US-listed."""
+    return "KR" if ticker.upper().endswith((".KS", ".KQ")) else "US"
+
+
+def _require_one_market(tickers: list[str]) -> None:
+    """Stop when one selection run mixes Korean and US tickers.
+
+    On one date index a US close dated D is only known after the Korean close of D (look-ahead), and
+    the other market's extra dates change how many rows the lookback and SMA windows span.
+    Pre-listing proxies are separate: they are aligned to earlier US closes."""
+    markets: dict[str, list[str]] = {}
+    for ticker in tickers:
+        markets.setdefault(_market(ticker), []).append(ticker)
+    if len(markets) > 1:
+        detail = "; ".join(f"{market}: {', '.join(sorted(group)[:5])}{' ...' if len(group) > 5 else ''}" for market, group in sorted(markets.items()))
+        raise SystemExit(
+            f"한국(.KS/.KQ)과 그 외 시장 티커를 한 번에 쓸 수 없습니다 ({detail}). "
+            "벤치마크·시장 필터·현금 ETF를 유니버스와 같은 시장으로 지정하세요(예: 미국 지수 필터는 360750.KS)"
+        )
 
 
 def _require_tickers(prices: pd.DataFrame, required: dict[str, str | None]) -> None:

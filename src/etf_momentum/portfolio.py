@@ -201,6 +201,8 @@ def run_portfolio(
             holdings = value * config.leverage * target
             reserve = value * (1 - config.leverage)
             history.append({"date": date, "value": value, "cost": cost / (value + cost)})
-        values.append(value)
+        # The first point is the 1.0 invested before the first purchase cost, so that cost shows up in the
+        # first day's return and in every summary measured from the start.
+        values.append(value if previous_date is not None else 1.0)
         previous_date = date
     return pd.Series(values, index=data.index, name="portfolio"), pd.DataFrame(history)

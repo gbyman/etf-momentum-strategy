@@ -97,3 +97,68 @@ def test_exclusion_reason_names_custom_thresholds() -> None:
 def test_exclusion_reason_keeps_default_wording() -> None:
     row = pd.Series({"positive_momentum": False, "above_sma": False, "price_fresh": True})
     assert cli._exclusion_reason(row, MomentumConfig(sma_window=120)) == "모멘텀≤0, 120일선 아래"
+
+
+# F05: a held asset (cash included) whose data stops mid-holding is a data error, not 0% returns
+from etf_momentum.backtest import BacktestConfig, StaleDataError, run_backtest  # noqa: E402
+
+
+def cash_only_backtest(observed_gap: slice | None) -> tuple:
+    index = pd.bdate_range(end="2026-10-06", periods=700)
+    steps = np.arange(700)
+    prices = pd.DataFrame({"BENCH": 100 * 1.0005**steps, "CASH": 100 * 1.0001**steps}, index=index)
+    observed = prices.notna()
+    if observed_gap is not None:
+        observed.loc[index[observed_gap], "CASH"] = False
+    config = BacktestConfig(top_n=1, benchmark="BENCH", cash_ticker="CASH", candidate_tickers=("NOPE",))
+    return run_backtest(prices, config, observed=observed)
+
+
+def test_held_cash_gap_mid_backtest_is_an_error() -> None:
+    with pytest.raises(StaleDataError, match="CASH"):
+        cash_only_backtest(slice(400, 501))
+
+
+def test_short_holiday_gap_in_held_cash_is_fine() -> None:
+    equity, _, _ = cash_only_backtest(slice(400, 403))  # 3 rows without a close
+    assert equity["strategy"].iloc[-1] > 1
+
+
+def test_cash_before_its_first_observation_is_uninvested_cash() -> None:
+    equity, _, _ = cash_only_backtest(slice(0, 450))  # cash ETF listed later: held as 0% cash until then
+    assert equity["strategy"].iloc[-1] > 1
+
+
+# F02: proxy-filled rows are observed only when the proxy (and FX) really had new closes
+from etf_momentum.data import proxy_observations, splice_proxies  # noqa: E402
+
+
+def test_proxy_that_stopped_updating_is_not_observed() -> None:
+    local = pd.bdate_range("2018-01-01", "2020-03-02")
+    raw = pd.DataFrame({"LOCAL": np.nan}, index=local)
+    raw.iloc[-1, 0] = 200.0
+    us = pd.bdate_range("2017-12-29", "2020-01-15")  # the proxy and FX stop 44 days before listing
+    proxy = pd.Series(100 * np.exp(np.arange(len(us)) * 0.001), index=us)
+    fx = pd.Series(1000.0, index=us)
+    filled, starts = splice_proxies(raw, {"LOCAL": proxy}, fx)
+    seen = proxy_observations(proxy, fx, local[local < starts["LOCAL"]], max_stale=5)
+    row = rank_momentum(filled, pd.Timestamp("2020-02-28"), observed=seen.to_frame("LOCAL").reindex(local, fill_value=True)).iloc[0]
+    assert not row["price_fresh"] and not row["eligible"]
+    assert pd.Timestamp(row["last_observed"]) == pd.Timestamp("2020-01-16")  # the first local day after the last US close
+
+
+def test_proxy_observed_each_day_with_us_holidays() -> None:
+    local = pd.bdate_range("2019-01-01", "2019-12-31")
+    us = pd.bdate_range("2018-12-01", "2019-12-31").drop(pd.to_datetime(["2019-07-04", "2019-11-28"]))
+    proxy = pd.Series(100.0, index=us)
+    fx = pd.Series(1000.0, index=pd.bdate_range("2018-12-01", "2019-12-31"))
+    seen = proxy_observations(proxy, fx, local, max_stale=5)
+    assert seen.sum() == len(local) - 2  # only the days after the two US holidays bring no new close
+
+
+# F07: the curve starts at the 1.0 invested, so the first purchase cost is part of the measured return
+def test_initial_cost_stays_in_the_curve() -> None:
+    index = pd.bdate_range("2024-01-01", periods=2)
+    equity, history = run_portfolio(pd.DataFrame({"A": [0.0, 0.0]}, index=index), PortfolioConfig({"A": 1.0}, rebalance_cost_bps=100))
+    assert equity.tolist() == pytest.approx([1.0, 0.99])
+    assert history["cost"].tolist() == pytest.approx([0.01])

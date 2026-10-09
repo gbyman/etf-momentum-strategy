@@ -93,6 +93,30 @@ def _asof_previous_day(series: pd.Series, index: pd.DatetimeIndex) -> pd.Series:
     return pd.Series(values.to_numpy(), index=index)
 
 
+def _new_since_previous_row(series: pd.Series, index: pd.DatetimeIndex) -> np.ndarray:
+    """For each date in `index`: did `series` get an observation (strictly before that date) since the previous date?"""
+    known = series.dropna().sort_index()
+    source = pd.Series(known.index, index=known.index).reindex(index - pd.Timedelta(days=1), method="ffill")
+    values = source.to_numpy()
+    previous = np.concatenate([[np.datetime64("NaT")], values[:-1]]).astype(values.dtype)
+    return ~pd.isna(values) & (pd.isna(previous) | (values != previous))
+
+
+def proxy_observations(proxy: pd.Series, fx: pd.Series | None, index: pd.DatetimeIndex, max_stale: int) -> pd.Series:
+    """Which local dates in `index` a proxy-filled price really observes, under splice_proxies' as-of rule.
+
+    A date counts when the proxy has a new close since the previous local date and the FX rate has had
+    a new value within the last `max_stale` local dates. A proxy that stopped updating is not observed
+    just because its last value is carried forward."""
+    seen = _new_since_previous_row(proxy, index)
+    if fx is not None:
+        fx_new = _new_since_previous_row(fx, index)
+        positions = np.arange(len(index))
+        last_fx = pd.Series(np.where(fx_new, positions, np.nan)).ffill().to_numpy()
+        seen &= ~np.isnan(last_fx) & (positions - last_fx <= max_stale)
+    return pd.Series(seen, index=index)
+
+
 def splice_proxies(
     frame: pd.DataFrame, proxies: dict[str, pd.Series], fx: pd.Series | None, scale: bool = True
 ) -> tuple[pd.DataFrame, dict[str, pd.Timestamp]]:

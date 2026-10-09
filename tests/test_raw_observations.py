@@ -78,7 +78,7 @@ def test_observed_freshness_counts_trading_rows() -> None:
 
 
 # Task 3: market filter freshness, backtest pass-through, exchange-calendar month-end
-from etf_momentum.backtest import BacktestConfig, previous_month_end, run_backtest, select_holdings  # noqa: E402
+from etf_momentum.backtest import BacktestConfig, StaleDataError, previous_month_end, run_backtest, select_holdings  # noqa: E402
 from etf_momentum.signals import MomentumConfig  # noqa: E402
 
 ELIGIBLE_A = pd.DataFrame({"ticker": ["A"], "eligible": [True]})
@@ -109,20 +109,19 @@ def test_filter_never_observed_yet_is_an_error_not_risk_on() -> None:
         select_holdings(ELIGIBLE_A, prices, prices.index[300], BacktestConfig(top_n=1, benchmark="BENCH", risk_on_benchmark=True), observed=observed)
 
 
-def test_run_backtest_excludes_unobserved_candidate() -> None:
+def test_run_backtest_stops_when_a_held_candidate_stops_reporting() -> None:
     index = pd.bdate_range("2020-01-01", periods=600)
     steps = np.arange(600)
     prices = pd.DataFrame({"A": 100 * 1.002**steps, "B": 100 * 1.001**steps, "BENCH": 100.0, "CASH": 100.0}, index=index)
     observed = prices.notna()
-    observed.loc[index[300]:, "A"] = False  # A's data stopped; its filled price still trends up
-    _, positions, _ = run_backtest(
-        prices,
-        BacktestConfig(top_n=1, cash_ticker="CASH", benchmark="BENCH", candidate_tickers=("A", "B"),
-                       momentum=MomentumConfig(skip_days=0, sma_window=100)),
-        observed=observed,
-    )
-    late = positions[pd.to_datetime(positions["rebalance_date"]) > index[320]]
-    assert "A" not in ",".join(late["tickers"])
+    observed.loc[index[300]:, "A"] = False  # A's data stopped while held; its filled price still trends up
+    with pytest.raises(StaleDataError, match="A"):  # unknown returns are not counted as 0% (review 2026-10-09 F05)
+        run_backtest(
+            prices,
+            BacktestConfig(top_n=1, cash_ticker="CASH", benchmark="BENCH", candidate_tickers=("A", "B"),
+                           momentum=MomentumConfig(skip_days=0, sma_window=100)),
+            observed=observed,
+        )
 
 
 SESSIONS = pd.bdate_range("2026-08-01", "2026-10-31").drop(pd.to_datetime(["2026-09-24", "2026-09-25"]))
@@ -159,14 +158,14 @@ def test_required_ticker_without_recent_observation_stops() -> None:
     cli._require_fresh(observed, {"benchmark": "BENCH", "cash": None})
 
 
-def test_proxy_filled_history_counts_as_observed() -> None:
+def test_proxy_filled_history_is_observed_when_the_proxy_was() -> None:
     index = pd.bdate_range("2026-01-01", periods=10)
     raw = pd.DataFrame({"K": [np.nan] * 5 + [10.0] * 5, "BENCH": 1.0}, index=index)
     prices = raw.copy()
     prices.loc[index[:5], "K"] = 9.0  # spliced from a proxy
-    args = argparse.Namespace(proxy_starts={"K": index[5]})
-    observed = cli._observations(raw, args, prices)
-    assert observed["K"].all()
+    proxy_seen = pd.Series([True, True, False, True, True], index=index[:5])  # no new proxy close on day 3
+    observed = cli._observations(raw, argparse.Namespace(proxy_observed={"K": proxy_seen}), prices)
+    assert observed["K"].tolist() == [True, True, False, True, True] + [True] * 5
 
 
 def test_exchange_sessions_follow_the_benchmark_suffix() -> None:
@@ -205,7 +204,6 @@ def test_portfolio_ticker_sleeve_with_a_raw_gap_stops(tmp_path, monkeypatch) -> 
 
 
 # Final review fixes
-from etf_momentum.backtest import StaleDataError  # noqa: E402
 
 
 def test_observations_reuse_the_first_download_under_refresh(tmp_path, monkeypatch) -> None:
@@ -219,7 +217,7 @@ def test_observations_reuse_the_first_download_under_refresh(tmp_path, monkeypat
         return both if len(calls) == 1 else bench_only  # a second download would lose CASH
 
     monkeypatch.setattr(data.yf, "download", fake)
-    args = argparse.Namespace(end=None, cache_dir=tmp_path, refresh=True, proxy_starts={})
+    args = argparse.Namespace(end=None, cache_dir=tmp_path, refresh=True, proxy_observed={})
     prices, raw = cli._download(["BENCH", "CASH"], None, args)
     observed = cli._observations(raw, args, prices)
     assert len(calls) == 1 and observed["CASH"].all()

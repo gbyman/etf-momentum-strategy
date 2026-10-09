@@ -30,6 +30,7 @@ from etf_momentum.data import (
     download_prices,
     download_traded_value,
     load_universe,
+    proxy_observations,
     splice_proxies,
     staleness_message,
     unique_tickers,
@@ -38,7 +39,7 @@ from etf_momentum.portfolio import PortfolioConfig, annualized_cost, run_portfol
 from etf_momentum.records import record_signal
 from etf_momentum.reporting import _code_revision, ensure_output_dir, save_equity_chart, save_json, save_run_metadata
 from etf_momentum.strategy import Strategy, StrategyError, load_strategy
-from etf_momentum.signals import LIQUIDITY_MAX_STALE_DAYS, RANK_BY_CHOICES, MomentumConfig, observed_freshness, rank_momentum
+from etf_momentum.signals import LIQUIDITY_MAX_STALE_DAYS, PRICE_MAX_STALE_DAYS, RANK_BY_CHOICES, MomentumConfig, observed_freshness, rank_momentum
 from etf_momentum.walkforward import METRICS, oos_equity, walk_forward
 from etf_momentum.weekly import append_snapshot, append_strategy_snapshot, build_weekly_report, load_previous_snapshot, load_strategy_snapshot
 
@@ -1279,12 +1280,14 @@ def _apply_proxies(
     members: list, prices: pd.DataFrame, traded_value: pd.DataFrame | None, start: str | None, args: argparse.Namespace
 ) -> tuple[pd.DataFrame, pd.DataFrame | None]:
     """With --use-proxies, fill each ETF's pre-listing history from its `proxy` ticker converted to local currency."""
-    args.proxy_starts = {}
+    args.proxy_observed = {}
     proxies = {m.ticker: m.proxy for m in members if m.proxy and m.ticker in prices.columns}
     if not args.use_proxies or not proxies:
         return prices, traded_value
     tickers = sorted(set(proxies.values()) | {args.proxy_fx})
-    proxy_prices = download_prices(tickers, start=start, end=args.end, cache_dir=args.cache_dir, refresh=args.refresh)
+    # Raw closes: splice_proxies takes the last real close before each local date, and
+    # proxy_observations needs the real observation dates.
+    proxy_prices = download_prices(tickers, start=start, end=args.end, cache_dir=args.cache_dir, refresh=args.refresh, raw=True)
     if args.proxy_fx not in proxy_prices.columns:
         raise SystemExit(f"No data for proxy FX {args.proxy_fx}; rerun with --refresh or without --use-proxies")
     unavailable = sorted({p for p in proxies.values() if p not in proxy_prices.columns})
@@ -1293,7 +1296,10 @@ def _apply_proxies(
         proxies = {t: p for t, p in proxies.items() if p in proxy_prices.columns}
     fx = proxy_prices[args.proxy_fx]
     prices, starts = splice_proxies(prices, {t: proxy_prices[p] for t, p in proxies.items()}, fx)
-    args.proxy_starts = starts
+    args.proxy_observed = {
+        t: proxy_observations(proxy_prices[proxies[t]], fx, prices.index[prices.index < first], PRICE_MAX_STALE_DAYS)
+        for t, first in starts.items()
+    }
     if traded_value is not None:
         proxy_value = download_traded_value(tickers, start=start, end=args.end, cache_dir=args.cache_dir, refresh=args.refresh)
         available = {t: proxy_value[p] for t, p in proxies.items() if p in proxy_value.columns and t in traded_value.columns}
@@ -1369,12 +1375,12 @@ def _non_negative_int(value: str) -> int:
 def _observations(raw: pd.DataFrame, args: argparse.Namespace, prices: pd.DataFrame) -> pd.DataFrame:
     """Date x ticker table of real closes, from the raw frame `_download` returned with the prices.
 
-    Days filled from a proxy before listing count as observed: the proxy was observed then."""
+    Days filled from a proxy before listing count as observed when the proxy had a new close
+    (see data.proxy_observations), not merely because a value was carried forward."""
     observed = raw.reindex(index=prices.index, columns=prices.columns).notna()
-    for ticker, first_real in getattr(args, "proxy_starts", {}).items():
+    for ticker, seen in getattr(args, "proxy_observed", {}).items():
         if ticker in observed.columns:
-            before = observed.index < first_real
-            observed.loc[before, ticker] = prices.loc[before, ticker].notna()
+            observed.loc[seen.index, ticker] = seen
     return observed
 
 

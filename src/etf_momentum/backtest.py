@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 import numpy as np
 import pandas as pd
 
-from etf_momentum.signals import MomentumConfig, observed_freshness, rank_momentum
+from etf_momentum.signals import PRICE_MAX_STALE_DAYS, MomentumConfig, observed_freshness, rank_momentum
 
 
 # buy_and_hold: target weights are set at each rebalance and then drift with prices until the next one.
@@ -84,6 +84,7 @@ def run_backtest(
     if len(rebalance_dates) < 2:
         raise ValueError("Not enough rebalance dates after warm-up period")
 
+    since_observed = _rows_since_observation(observed, prices.index) if observed is not None else None
     strategy_returns = pd.Series(0.0, index=prices.index, name="strategy_return")
     positions: list[dict[str, object]] = []
     previous_weights = pd.Series(0.0, index=prices.columns)
@@ -112,6 +113,8 @@ def run_backtest(
         weights = _select_weights(ranking, prices, rebalance_date, config, observed)
         weights, vol_scale, est_vol = _apply_volatility_target(weights, prices, rebalance_date, config)
         weights = _apply_risky_cap(weights, config)
+        if since_observed is not None:
+            _check_held_observations(since_observed, weights, holding_dates)
         traded_notional = float((weights - previous_weights).abs().sum())
         turnover = traded_notional / 2.0
         cost = traded_notional * (config.transaction_cost_bps / 10_000.0)
@@ -434,6 +437,28 @@ def _cap_weights(weights: pd.Series, cap: float) -> pd.Series:
             break
         capped[free] = capped[free] / capped[free].sum() * room
     return capped
+
+
+def _rows_since_observation(observed: pd.DataFrame, index: pd.DatetimeIndex) -> pd.DataFrame:
+    """Rows of `index` since each ticker's last real close (NaN before its first one)."""
+    seen = observed.reindex(index=index).fillna(False).astype(bool).to_numpy()
+    positions = np.arange(len(index))[:, None]
+    last = pd.DataFrame(np.where(seen, positions, np.nan)).ffill().to_numpy()
+    return pd.DataFrame(positions - last, index=index, columns=observed.columns)
+
+
+def _check_held_observations(since_observed: pd.DataFrame, weights: pd.Series, holding_dates: pd.DatetimeIndex) -> None:
+    """A held asset whose closes stop mid-holding would earn a made-up 0%; stop instead.
+
+    Before an asset's first close (e.g. the cash ETF before listing) it is uninvested cash, as before."""
+    held = [t for t in weights.index[weights > 0] if t in since_observed.columns]
+    gaps = since_observed.loc[holding_dates, held]
+    stale = gaps.columns[(gaps > PRICE_MAX_STALE_DAYS).any()]
+    if len(stale):
+        raise StaleDataError(
+            f"Held ticker(s) without a close for more than {PRICE_MAX_STALE_DAYS} trading days between "
+            f"{holding_dates[0].date()} and {holding_dates[-1].date()}: {', '.join(stale)}"
+        )
 
 
 def _cash_weights(weights: pd.Series, config: BacktestConfig, amount: float = 1.0) -> pd.Series:

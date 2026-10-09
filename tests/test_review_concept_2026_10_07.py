@@ -184,7 +184,7 @@ def test_missing_proxy_is_skipped_with_a_message(monkeypatch, capsys) -> None:
 
 def test_cache_missing_a_requested_ticker_is_downloaded_again(tmp_path, monkeypatch) -> None:
     index = pd.to_datetime(["2020-01-02", "2020-01-03"])
-    cache = data._cache_path(["AAA", "BBB"], "2020-01-01", "2020-01-04", tmp_path)
+    cache = data._cache_path(["AAA", "BBB"], "2020-01-01", "2020-01-04", tmp_path, prefix=data.PRICE_CACHE_PREFIX)
     pd.DataFrame({"AAA": [1.0, 2.0]}, index=index).to_csv(cache)  # an old partial cache
     full = pd.DataFrame([[1.0, 5.0], [2.0, 6.0]], index=index, columns=pd.MultiIndex.from_product([["Close"], ["AAA", "BBB"]]))
     calls = []

@@ -65,7 +65,7 @@ def test_cache_path_is_stable_for_long_ticker_lists(tmp_path) -> None:
 
 
 def test_stale_latest_cache_is_redownloaded(tmp_path, monkeypatch) -> None:
-    cache = data._cache_path(["AAA"], "2020-01-01", None, tmp_path)
+    cache = data._cache_path(["AAA"], "2020-01-01", None, tmp_path, prefix=data.PRICE_CACHE_PREFIX)
     pd.DataFrame({"AAA": [1.0]}, index=pd.to_datetime(["2020-01-02"])).to_csv(cache)
     old = time.time() - 48 * 3600
     os.utime(cache, (old, old))
@@ -77,7 +77,7 @@ def test_stale_latest_cache_is_redownloaded(tmp_path, monkeypatch) -> None:
 
 
 def test_stale_cache_is_used_with_warning_when_download_fails(tmp_path, monkeypatch) -> None:
-    cache = data._cache_path(["AAA"], "2020-01-01", None, tmp_path)
+    cache = data._cache_path(["AAA"], "2020-01-01", None, tmp_path, prefix=data.PRICE_CACHE_PREFIX)
     pd.DataFrame({"AAA": [1.0]}, index=pd.to_datetime(["2020-01-02"])).to_csv(cache)
     old = time.time() - 48 * 3600
     os.utime(cache, (old, old))

@@ -122,7 +122,7 @@ def test_rank_command_writes_previous_month_end_selection(tmp_path, monkeypatch)
     )
     monkeypatch.setattr(cli, "download_prices", lambda tickers, **kw: prices[[t for t in tickers if t in prices]])
     monkeypatch.setattr(
-        cli, "previous_month_end", lambda dates, today=None: backtest.previous_month_end(dates, pd.Timestamp("2026-10-07"))
+        cli, "previous_month_end", lambda dates, today=None, **kw: backtest.previous_month_end(dates, pd.Timestamp("2026-10-07"))
     )
     monkeypatch.setattr(
         sys, "argv",

@@ -85,7 +85,7 @@ def reason_setup(tmp_path, monkeypatch):
         },
         index=index,
     )
-    data.loc["2026-08-17":, "E"] = data.loc["2026-08-14", "E"]  # frozen since mid-August: stale at 09-30
+    data.loc["2026-08-17":, "E"] = np.nan  # no close since mid-August: stale at 09-30
     universe = tmp_path / "u.csv"
     universe.write_text("ticker,name,category,enabled,group\nA,Alpha,X,1,g1\nB,Beta,X,1,g1\nC,Gamma,X,1,\n"
                         "D,Delta,X,1,\nE,Echo,X,1,\nCASH,Cash,Cash,1,\n")
@@ -97,8 +97,10 @@ def reason_setup(tmp_path, monkeypatch):
         "selection": {"top_n": 3, "max_per_group": 1, "risk_on_benchmark": True, "risk_on_tickers": None},
     }
     (tmp_path / "why.json").write_text(json.dumps(strategy))
-    monkeypatch.setattr(cli, "download_prices", lambda tickers, **kw: data[[t for t in tickers if t in data]])
-    monkeypatch.setattr(cli, "previous_month_end", lambda d, today=None: backtest.previous_month_end(d, pd.Timestamp("2026-10-07")))
+    monkeypatch.setattr(
+        cli, "download_prices", lambda tickers, raw=False, **kw: (lambda f: f if raw else f.ffill())(data[[t for t in tickers if t in data]])
+    )
+    monkeypatch.setattr(cli, "previous_month_end", lambda d, today=None, **kw: backtest.previous_month_end(d, pd.Timestamp("2026-10-07")))
     monkeypatch.setattr(sys, "argv", ["etf-momentum", "rank", "--strategy", str(tmp_path / "why.json"), "--output-dir", str(tmp_path / "out")])
     cli.main()
     return tmp_path / "out"

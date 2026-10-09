@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import functools
 import hashlib
 import math
 import sys
@@ -36,7 +37,7 @@ from etf_momentum.portfolio import PortfolioConfig, annualized_cost, run_portfol
 from etf_momentum.records import record_signal
 from etf_momentum.reporting import _code_revision, ensure_output_dir, save_equity_chart, save_json, save_run_metadata
 from etf_momentum.strategy import Strategy, StrategyError, load_strategy
-from etf_momentum.signals import LIQUIDITY_MAX_STALE_DAYS, RANK_BY_CHOICES, MomentumConfig, rank_momentum
+from etf_momentum.signals import LIQUIDITY_MAX_STALE_DAYS, RANK_BY_CHOICES, MomentumConfig, observed_freshness, rank_momentum
 from etf_momentum.walkforward import METRICS, oos_equity, walk_forward
 from etf_momentum.weekly import append_snapshot, append_strategy_snapshot, build_weekly_report, load_previous_snapshot, load_strategy_snapshot
 
@@ -262,10 +263,14 @@ def run_rank_command(args: argparse.Namespace) -> None:
     prices = _download(tickers, start, args)
     traded_value = _traded_value(tickers, start, args, prices)
     prices, traded_value = _apply_proxies(members, prices, traded_value, start, args)
+    observed = _observations(tickers, start, args, prices)
     _require_tickers(prices, _required(args, include_cash=False))
+    _require_fresh(observed, _required(args, include_cash=False))
     save_run_metadata(output_dir, args, prices, traded_value=traded_value, execution=_execution_note(args))
     config = _momentum_config_from_args(args)
-    ranking = rank_momentum(prices, benchmark=args.benchmark, config=config, candidate_tickers=_candidates(members, args), traded_value=traded_value)
+    ranking = rank_momentum(
+        prices, benchmark=args.benchmark, config=config, candidate_tickers=_candidates(members, args), traded_value=traded_value, observed=observed
+    )
     _exit_if_empty(ranking)
     ranking = _attach_names(ranking, members)
     ranking.to_csv(output_dir / "latest_ranking.csv", index=False)
@@ -293,7 +298,7 @@ def run_rank_command(args: argparse.Namespace) -> None:
     print(ranking[columns].head(args.top).to_string(index=False, float_format=lambda value: f"{value: .2%}"))
     print(f"\nSaved: {output_dir / 'latest_ranking.csv'}")
 
-    selection = _month_end_selection(members, prices, traded_value, config, args)
+    selection = _month_end_selection(members, prices, traded_value, observed, config, args)
     selection.to_csv(output_dir / "latest_selection.csv", index=False)
     print(f"Saved: {output_dir / 'latest_selection.csv'}")
     if args.holdings:
@@ -366,15 +371,28 @@ def _record_month_end_signal(
 
 
 def _month_end_selection(
-    members: list, prices: pd.DataFrame, traded_value: pd.DataFrame | None, config: MomentumConfig, args: argparse.Namespace
+    members: list,
+    prices: pd.DataFrame,
+    traded_value: pd.DataFrame | None,
+    observed: pd.DataFrame,
+    config: MomentumConfig,
+    args: argparse.Namespace,
 ) -> pd.DataFrame:
     """Print and return the ETFs the strategy would hold after the previous month-end close."""
     try:
-        as_of = previous_month_end(prices.index, today=_selection_today(args))
+        today = _selection_today(args) or pd.Timestamp.today().normalize()
+        benchmark_days = observed.index[observed[args.benchmark]] if args.benchmark in observed.columns else prices.index
+        as_of = previous_month_end(benchmark_days, today=today, sessions=_month_end_sessions(args.benchmark, today))
     except ValueError as exc:
         raise SystemExit(f"직전 월말 선택을 만들 수 없습니다: {exc}. --refresh로 데이터를 다시 받으세요") from exc
     ranking = rank_momentum(
-        prices, as_of, benchmark=args.benchmark, config=config, candidate_tickers=_candidates(members, args), traded_value=traded_value
+        prices,
+        as_of,
+        benchmark=args.benchmark,
+        config=config,
+        candidate_tickers=_candidates(members, args),
+        traded_value=traded_value,
+        observed=observed,
     )
     rule = BacktestConfig(
         top_n=args.top_n,
@@ -385,7 +403,7 @@ def _month_end_selection(
         momentum=config,
         **_group_config(members, args),
     )
-    picked = select_holdings(ranking, prices, as_of, rule)
+    picked = select_holdings(ranking, prices, as_of, rule, observed=observed)
     names = {m.ticker: m.name for m in members}
     groups = {m.ticker: m.group for m in members}
     filters = ", ".join(_risk_on_tickers(args) or (args.benchmark,))
@@ -475,10 +493,14 @@ def run_weekly_command(args: argparse.Namespace) -> None:
     prices = _download(tickers, start, args)
     traded_value = _traded_value(tickers, start, args, prices)
     prices, traded_value = _apply_proxies(members, prices, traded_value, start, args)
+    observed = _observations(tickers, start, args, prices)
     _require_tickers(prices, _required(args, include_cash=False, include_filters=False))
+    _require_fresh(observed, _required(args, include_cash=False, include_filters=False))
     save_run_metadata(output_dir, args, prices, traded_value=traded_value, execution=_execution_note(args))
     config = _momentum_config_from_args(args)
-    ranking = rank_momentum(prices, benchmark=args.benchmark, config=config, candidate_tickers=_candidates(members, args), traded_value=traded_value)
+    ranking = rank_momentum(
+        prices, benchmark=args.benchmark, config=config, candidate_tickers=_candidates(members, args), traded_value=traded_value, observed=observed
+    )
     _exit_if_empty(ranking)
     ranking = _attach_names(ranking, members)
     ranking.to_csv(output_dir / "latest_ranking.csv", index=False)
@@ -552,7 +574,9 @@ def run_backtest_command(args: argparse.Namespace) -> None:
     prices = _download(tickers, args.start, args)
     traded_value = _traded_value(tickers, args.start, args, prices)
     prices, traded_value = _apply_proxies(members, prices, traded_value, args.start, args)
+    observed = _observations(tickers, args.start, args, prices)
     _require_tickers(prices, _required(args, include_cash=True))
+    _require_fresh(observed, _required(args, include_cash=True))
     save_run_metadata(output_dir, args, prices, traded_value=traded_value, execution=_execution_note(args))
     momentum_config = _momentum_config_from_args(args)
     config = BacktestConfig(
@@ -574,13 +598,14 @@ def run_backtest_command(args: argparse.Namespace) -> None:
         candidate_tickers=_candidates(members, args),
         **_group_config(members, args),
     )
-    equity, positions, metrics = run_backtest(prices, config, traded_value=traded_value)
+    equity, positions, metrics = run_backtest(prices, config, traded_value=traded_value, observed=observed)
     ranking = rank_momentum(
         prices,
         benchmark=args.benchmark,
         config=momentum_config,
         candidate_tickers=config.candidate_tickers,
         traded_value=traded_value,
+        observed=observed,
     )
     ranking = _attach_names(ranking, members)
 
@@ -604,7 +629,9 @@ def run_compare_command(args: argparse.Namespace) -> None:
     prices = _download(tickers, args.start, args)
     traded_value = _traded_value(tickers, args.start, args, prices)
     prices, traded_value = _apply_proxies(members, prices, traded_value, args.start, args)
+    observed = _observations(tickers, args.start, args, prices)
     _require_tickers(prices, _required(args, include_cash=True))
+    _require_fresh(observed, _required(args, include_cash=True))
     save_run_metadata(output_dir, args, prices, traded_value=traded_value, execution=_execution_note(args))
 
     base_momentum = _momentum_config_from_args(args)
@@ -656,7 +683,7 @@ def run_compare_command(args: argparse.Namespace) -> None:
                                 **group_config,
                             )
                             try:
-                                _, positions, metrics = run_backtest(prices, config, traded_value=traded_value)
+                                _, positions, metrics = run_backtest(prices, config, traded_value=traded_value, observed=observed)
                             except ValueError as exc:
                                 rows.append(
                                     {
@@ -740,7 +767,9 @@ def run_walkforward_command(args: argparse.Namespace) -> None:
     prices = _download(tickers, args.start, args)
     traded_value = _traded_value(tickers, args.start, args, prices)
     prices, traded_value = _apply_proxies(members, prices, traded_value, args.start, args)
+    observed = _observations(tickers, args.start, args, prices)
     _require_tickers(prices, _required(args, include_cash=True))
+    _require_fresh(observed, _required(args, include_cash=True))
     save_run_metadata(output_dir, args, prices, traded_value=traded_value, execution=_execution_note(args))
     if args.cash and args.cash not in prices.columns:
         raise SystemExit(f"Cash ticker {args.cash} has no price data; use --cash none to hold uninvested cash")
@@ -791,7 +820,7 @@ def run_walkforward_command(args: argparse.Namespace) -> None:
             max_per_group=max_per_group if max_per_group > 0 else None,
         )
         try:
-            equity, _, _ = run_backtest(prices, config, traded_value=traded_value)
+            equity, _, _ = run_backtest(prices, config, traded_value=traded_value, observed=observed)
         except ValueError as exc:
             print(f"  skipped: {exc}")
             continue
@@ -937,7 +966,7 @@ def run_portfolio_command(args: argparse.Namespace) -> None:
         # every ticker is forward-filled onto the other markets' days (e.g. US days on Korean holidays).
         if ticker not in own:
             own[ticker] = download_prices(
-                [ticker], start=spec.get("start"), end=spec.get("end"), cache_dir=args.cache_dir, refresh=args.refresh
+                [ticker], start=spec.get("start"), end=spec.get("end"), cache_dir=args.cache_dir, refresh=args.refresh, raw=True
             )[ticker]
         return own[ticker]
 
@@ -1242,6 +1271,7 @@ def _apply_proxies(
     members: list, prices: pd.DataFrame, traded_value: pd.DataFrame | None, start: str | None, args: argparse.Namespace
 ) -> tuple[pd.DataFrame, pd.DataFrame | None]:
     """With --use-proxies, fill each ETF's pre-listing history from its `proxy` ticker converted to local currency."""
+    args.proxy_starts = {}
     proxies = {m.ticker: m.proxy for m in members if m.proxy and m.ticker in prices.columns}
     if not args.use_proxies or not proxies:
         return prices, traded_value
@@ -1255,6 +1285,7 @@ def _apply_proxies(
         proxies = {t: p for t, p in proxies.items() if p in proxy_prices.columns}
     fx = proxy_prices[args.proxy_fx]
     prices, starts = splice_proxies(prices, {t: proxy_prices[p] for t, p in proxies.items()}, fx)
+    args.proxy_starts = starts
     if traded_value is not None:
         proxy_value = download_traded_value(tickers, start=start, end=args.end, cache_dir=args.cache_dir, refresh=args.refresh)
         available = {t: proxy_value[p] for t, p in proxies.items() if p in proxy_value.columns and t in traded_value.columns}
@@ -1305,6 +1336,51 @@ def _non_negative_int(value: str) -> int:
     if number < 0:
         raise argparse.ArgumentTypeError(f"must be >= 0, got {value}")
     return number
+
+
+def _observations(tickers: list[str], start: str | None, args: argparse.Namespace, prices: pd.DataFrame) -> pd.DataFrame:
+    """Date x ticker table of real closes (same raw cache as the prices, no extra download).
+
+    Days filled from a proxy before listing count as observed: the proxy was observed then."""
+    raw = download_prices(tickers, start=start, end=args.end, cache_dir=args.cache_dir, refresh=args.refresh, raw=True)
+    observed = raw.reindex(index=prices.index, columns=prices.columns).notna()
+    for ticker, first_real in getattr(args, "proxy_starts", {}).items():
+        if ticker in observed.columns:
+            before = observed.index < first_real
+            observed.loc[before, ticker] = prices.loc[before, ticker].notna()
+    return observed
+
+
+def _require_fresh(observed: pd.DataFrame, required: dict[str, str | None]) -> None:
+    """Stop when a benchmark, market filter or cash ETF has no recent real observation."""
+    stale = []
+    for role, ticker in required.items():
+        if not ticker:
+            continue
+        last, fresh = observed_freshness(observed[ticker] if ticker in observed.columns else None, observed.index)
+        if not fresh:
+            stale.append(f"{role} {ticker} (last observation {last.date() if last is not None else 'none'})")
+    if stale:
+        raise SystemExit(f"Stale data for required ticker(s): {', '.join(stale)}. Rerun with --refresh or check the ticker")
+
+
+@functools.lru_cache(maxsize=4)
+def _exchange_sessions(benchmark: str) -> pd.DatetimeIndex | None:
+    """Trading days of the benchmark's exchange: XKRX for .KS/.KQ tickers, otherwise XNYS."""
+    import exchange_calendars as xc
+
+    code = "XKRX" if benchmark.upper().endswith((".KS", ".KQ")) else "XNYS"
+    return pd.DatetimeIndex(xc.get_calendar(code, start="2005-01-01").sessions).tz_localize(None)
+
+
+def _month_end_sessions(benchmark: str, today: pd.Timestamp) -> pd.DatetimeIndex | None:
+    """Exchange sessions when the calendar covers the month before `today`; otherwise None with a note."""
+    sessions = _exchange_sessions(benchmark)
+    month = pd.Timestamp(today).to_period("M") - 1
+    if sessions is None or not ((sessions.to_period("M") == month).any() and sessions[-1] >= month.end_time.normalize()):
+        print(f"거래소 달력이 {month}을(를) 다루지 않아 기존 월말 규칙으로 판단합니다")
+        return None
+    return sessions
 
 
 def _require_tickers(prices: pd.DataFrame, required: dict[str, str | None]) -> None:

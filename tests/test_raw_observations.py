@@ -142,3 +142,64 @@ def test_holiday_row_in_data_does_not_move_the_month_end() -> None:
     sessions = pd.bdate_range("2025-12-01", "2026-01-31").drop(pd.to_datetime(["2025-12-25", "2025-12-31", "2026-01-01"]))
     dates = sessions.union(pd.to_datetime(["2025-12-31"]))  # a stray row on the 12-31 closure
     assert previous_month_end(dates, pd.Timestamp("2026-01-05"), sessions=sessions) == pd.Timestamp("2025-12-30")
+
+
+# Task 4: CLI wiring
+import argparse  # noqa: E402
+
+import etf_momentum.cli as cli  # noqa: E402
+
+
+def test_required_ticker_without_recent_observation_stops() -> None:
+    index = pd.bdate_range("2026-01-01", periods=40)
+    observed = pd.DataFrame({"BENCH": True, "CASH": True}, index=index)
+    observed.loc[index[-8]:, "CASH"] = False
+    with pytest.raises(SystemExit, match="cash CASH"):
+        cli._require_fresh(observed, {"benchmark": "BENCH", "cash": "CASH"})
+    cli._require_fresh(observed, {"benchmark": "BENCH", "cash": None})
+
+
+def test_proxy_filled_history_counts_as_observed(monkeypatch) -> None:
+    index = pd.bdate_range("2026-01-01", periods=10)
+    raw = pd.DataFrame({"K": [np.nan] * 5 + [10.0] * 5, "BENCH": 1.0}, index=index)
+    monkeypatch.setattr(cli, "download_prices", lambda tickers, **kw: raw[[t for t in tickers if t in raw]])
+    prices = raw.copy()
+    prices.loc[index[:5], "K"] = 9.0  # spliced from a proxy
+    args = argparse.Namespace(end=None, cache_dir="data", refresh=False, proxy_starts={"K": index[5]})
+    observed = cli._observations(["K", "BENCH"], None, args, prices)
+    assert observed["K"].all()
+
+
+def test_exchange_sessions_follow_the_benchmark_suffix() -> None:
+    kr = cli._exchange_sessions("069500.KS")
+    us = cli._exchange_sessions("SPY")
+    assert pd.Timestamp("2025-12-31") not in kr and pd.Timestamp("2025-12-31") in us  # KRX year-end closure
+    assert pd.Timestamp("2023-09-28") not in kr  # Chuseok
+
+
+def test_month_outside_the_calendar_falls_back_with_a_note(capsys, monkeypatch) -> None:
+    monkeypatch.setattr(cli, "_exchange_sessions", lambda benchmark: pd.bdate_range("2010-01-01", "2026-06-30"))
+    sessions = cli._month_end_sessions("069500.KS", pd.Timestamp("2026-10-08"))
+    assert sessions is None and "거래소 달력" in capsys.readouterr().out
+
+
+def test_portfolio_ticker_sleeve_with_a_raw_gap_stops(tmp_path, monkeypatch) -> None:
+    import json
+    import sys
+
+    index = pd.bdate_range("2023-01-02", periods=300)
+    raw = pd.DataFrame({"KR": np.linspace(100, 130, 300), "CASH": 100.0}, index=index)
+    raw.loc[index[150], "KR"] = np.nan  # the review's repro: a missing close inside the series
+
+    def fake(tickers, raw=False, **kw):
+        frame = pd.DataFrame(raw_frame[[t for t in tickers if t in raw_frame]])
+        return frame if raw else frame.ffill()
+
+    raw_frame = raw
+    monkeypatch.setattr(cli, "download_prices", fake)
+    spec = {"base_currency": "KRW", "calendar_ticker": "CASH", "cash_ticker": "CASH", "fx": {},
+            "sleeves": {"KR": {"ticker": "KR", "currency": "KRW"}}, "scenarios": [{"name": "kr", "weights": {"KR": 1.0}}]}
+    (tmp_path / "spec.json").write_text(json.dumps(spec))
+    monkeypatch.setattr(sys, "argv", ["etf-momentum", "portfolio", "--spec", str(tmp_path / "spec.json"), "--output-dir", str(tmp_path / "o")])
+    with pytest.raises(SystemExit, match="NaN"):
+        cli.main()

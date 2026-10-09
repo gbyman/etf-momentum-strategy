@@ -54,7 +54,7 @@ def offline(monkeypatch):
         return data[[t for t in tickers if t in data]]
 
     monkeypatch.setattr(cli, "download_prices", fake)
-    monkeypatch.setattr(cli, "previous_month_end", lambda d, today=None: backtest.previous_month_end(d, pd.Timestamp("2026-10-07")))
+    monkeypatch.setattr(cli, "previous_month_end", lambda d, today=None, **kw: backtest.previous_month_end(d, pd.Timestamp("2026-10-07")))
     return calls
 
 

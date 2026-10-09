@@ -129,7 +129,7 @@ def test_explanation_uses_configured_sma_window(tmp_path, monkeypatch, offline, 
     run(monkeypatch, "rank", "--strategy", path, "--output-dir", str(tmp_path / "o"))
     out = capsys.readouterr().out
     assert "100일선" in out and "200일선" not in out
-    assert cli._exclusion_reason(pd.Series({"above_sma": False}), sma_window=100) == "100일선 아래"
+    assert cli._exclusion_reason(pd.Series({"above_sma": False}), MomentumConfig(sma_window=100)) == "100일선 아래"
 
 
 def test_portfolio_command_reports_bad_settings_without_a_traceback(tmp_path, monkeypatch) -> None:

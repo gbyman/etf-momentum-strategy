@@ -167,11 +167,11 @@ def run_portfolio(
     _validate_config(config)
     if abs(sum(config.weights.values()) - 1.0) > 1e-9:
         raise ValueError(f"Sleeve weights must sum to 1, got {sum(config.weights.values()):.4f}")
-    missing = set(config.weights) - set(returns.columns)
+    names = [name for name, weight in config.weights.items() if weight > 0]  # a zero-weight sleeve is unused
+    missing = set(names) - set(returns.columns)
     if missing:
         raise ValueError(f"No returns for sleeves: {', '.join(sorted(missing))}")
 
-    names = list(config.weights)
     data = returns[names].dropna()  # start once every sleeve has data
     if len(data) < 2:
         raise ValueError(f"Sleeves need at least two common dates to evaluate, got {len(data)}")

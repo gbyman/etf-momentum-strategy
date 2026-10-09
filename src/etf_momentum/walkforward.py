@@ -57,7 +57,14 @@ def walk_forward(
         # Ties (e.g. several +inf scores) go to the higher training CAGR.
         cagrs = pd.Series({column: score(train[column].dropna(), "cagr") for column in scores.index})
         selected = pd.DataFrame({"score": scores, "cagr": cagrs}).sort_values(["score", "cagr"], ascending=False).index[0]
-        test_returns = test[selected].fillna(0.0)
+        test_returns = test[selected]
+        if test_returns.isna().any():
+            # Missing is not a 0% return; picking another config here would use test-period knowledge.
+            gap = test_returns[test_returns.isna()].index
+            raise ValueError(
+                f"Selected config {selected} has {len(gap)} missing test returns "
+                f"({gap[0].date()} ~ {gap[-1].date()}); check the input data"
+            )
         oos_parts.append(test_returns)
         rows.append(
             {

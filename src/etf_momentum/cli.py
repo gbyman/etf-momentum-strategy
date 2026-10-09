@@ -259,14 +259,15 @@ def run_rank_command(args: argparse.Namespace) -> None:
     output_dir = ensure_output_dir(args.output_dir)
     members = load_universe(args.universe)
     _validate_cash(members, args)
-    tickers = unique_tickers(members, extras=[args.benchmark, *(_risk_on_tickers(args) or ())])
+    tickers = unique_tickers(members, extras=[args.benchmark, args.cash, *(_risk_on_tickers(args) or ())])
     start = _start_from_lookback_years(args.lookback_years, args.end)
     prices, raw = _download(tickers, start, args)
     traded_value = _traded_value(tickers, start, args, prices)
     prices, traded_value = _apply_proxies(members, prices, traded_value, start, args)
     observed = _observations(raw, args, prices)
-    _require_tickers(prices, _required(args, include_cash=False))
-    _require_fresh(observed, _required(args, include_cash=False))
+    # The month-end selection names the cash ETF as the waiting asset, so it must have current data.
+    _require_tickers(prices, _required(args, include_cash=True))
+    _require_fresh(observed, _required(args, include_cash=True))
     save_run_metadata(output_dir, args, prices, traded_value=traded_value, execution=_execution_note(args))
     config = _momentum_config_from_args(args)
     ranking = rank_momentum(
@@ -434,7 +435,7 @@ def _month_end_selection(
     passed_over = ranking[(ranking["rank"] <= cutoff) & ~ranking["eligible"].astype(bool)].sort_values("rank")
     if not passed_over.empty:
         reasons = {
-            row.ticker: _exclusion_reason(pd.Series(row._asdict()), args.sma_window) for row in passed_over.itertuples(index=False)
+            row.ticker: _exclusion_reason(pd.Series(row._asdict()), config) for row in passed_over.itertuples(index=False)
         }
         print(" 상위 후보 중 제외: " + ", ".join(f"{t} ({r})" for t, r in reasons.items()))
         rows.extend({"status": "excluded", "ticker": t, "group": groups.get(t, ""), "reason": r} for t, r in reasons.items())
@@ -449,8 +450,8 @@ def _month_end_selection(
 
 
 EXCLUSION_CHECKS = (
-    ("positive_momentum", "모멘텀≤0"),
-    ("above_sma", "{sma}일선 아래"),
+    ("positive_momentum", "{momentum}"),
+    ("above_sma", "{trend}"),
     ("relative_ok", "상대강도 미달"),
     ("liquid", "유동성 부족"),
     ("volatility_ok", "변동성 계산 불가"),
@@ -458,9 +459,14 @@ EXCLUSION_CHECKS = (
 )
 
 
-def _exclusion_reason(row: pd.Series, sma_window: int = 200) -> str:
+def _exclusion_reason(row: pd.Series, config: MomentumConfig | None = None) -> str:
+    """Failed checks in words, naming the thresholds `config` used (defaults: momentum > 0, above the SMA)."""
+    config = config or MomentumConfig()
+    sma = config.sma_window
+    momentum = "모멘텀≤0" if config.min_weighted_momentum == 0 else f"모멘텀<{config.min_weighted_momentum:.1%}"
+    trend = f"{sma}일선 아래" if config.min_trend_strength == 0 else f"{sma}일선 대비 {config.min_trend_strength:.1%} 미만"
     return ", ".join(
-        label.format(sma=sma_window) for column, label in EXCLUSION_CHECKS if column in row and not bool(row[column])
+        label.format(momentum=momentum, trend=trend) for column, label in EXCLUSION_CHECKS if column in row and not bool(row[column])
     )
 
 
@@ -1066,8 +1072,8 @@ def _add_common_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--start", default="2010-01-01", help="Start date for historical data")
     parser.add_argument("--end", default=None, help="End date for historical data")
     parser.add_argument("--lookback-years", type=_positive_int, default=5, help="Data years for ranking command")
-    parser.add_argument("--lookbacks", default="63,126,252", help="Momentum lookbacks in trading days")
-    parser.add_argument("--weights", default="0.3,0.3,0.4", help="Momentum weights for lookbacks")
+    parser.add_argument("--lookbacks", type=_momentum_lookbacks, default="63,126,252", help="Momentum lookbacks in trading days")
+    parser.add_argument("--weights", type=_momentum_weights, default="0.3,0.3,0.4", help="Momentum weights for lookbacks")
     parser.add_argument("--skip-days", type=_non_negative_int, default=21, help="Recent days skipped in momentum calculation")
     parser.add_argument("--sma-window", type=_positive_int, default=200, help="Absolute trend filter window")
     parser.add_argument(
@@ -1303,6 +1309,26 @@ def _finite_float(value: str) -> float:
     if not math.isfinite(number):
         raise argparse.ArgumentTypeError(f"must be a finite number, got {value}")
     return number
+
+
+def _momentum_lookbacks(value: str) -> str:
+    """Three positive integers, e.g. 63,126,252 (kept as text; parsed by _momentum_config_from_args)."""
+    items = _parse_str_list(value)
+    if len(items) != 3 or not all(item.isdigit() and int(item) > 0 for item in items):
+        raise argparse.ArgumentTypeError(f"must be three positive integers, got {value}")
+    return value
+
+
+def _momentum_weights(value: str) -> str:
+    """Three finite numbers with a positive sum, the same rule as signal.weights in strategy files."""
+    items = _parse_str_list(value)
+    try:
+        weights = [float(item) for item in items]
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"must be three numbers, got {value}") from None
+    if len(weights) != 3 or not all(math.isfinite(w) for w in weights) or sum(weights) <= 0:
+        raise argparse.ArgumentTypeError(f"must be three finite numbers with a positive sum, got {value}")
+    return value
 
 
 def _non_negative_float(value: str) -> float:

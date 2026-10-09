@@ -116,7 +116,8 @@ def rank_momentum(
     benchmark_returns = _benchmark_returns(history, benchmark, config)
     avg_value = _average_traded_value(traded_value, as_of, config.liquidity_window)
 
-    candidates = history.columns if candidate_tickers is None else [t for t in candidate_tickers if t in history.columns]
+    # A repeated candidate is ranked once; otherwise it could fill two selection slots with one weight.
+    candidates = history.columns if candidate_tickers is None else [t for t in dict.fromkeys(candidate_tickers) if t in history.columns]
     for ticker in candidates:
         if not np.isfinite(current.get(ticker, np.nan)):
             continue

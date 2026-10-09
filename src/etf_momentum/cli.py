@@ -39,7 +39,7 @@ from etf_momentum.portfolio import PortfolioConfig, annualized_cost, run_portfol
 from etf_momentum.records import record_signal
 from etf_momentum.reporting import _code_revision, ensure_output_dir, save_equity_chart, save_json, save_run_metadata
 from etf_momentum.strategy import Strategy, StrategyError, load_strategy
-from etf_momentum.signals import LIQUIDITY_MAX_STALE_DAYS, PRICE_MAX_STALE_DAYS, RANK_BY_CHOICES, MomentumConfig, observed_freshness, rank_momentum
+from etf_momentum.signals import LIQUIDITY_MAX_STALE_DAYS, RANK_BY_CHOICES, MomentumConfig, observed_freshness, rank_momentum
 from etf_momentum.walkforward import METRICS, oos_equity, walk_forward
 from etf_momentum.weekly import append_snapshot, append_strategy_snapshot, build_weekly_report, load_previous_snapshot, load_strategy_snapshot
 
@@ -949,10 +949,27 @@ def _input_file_record(path: Path) -> dict[str, object]:
     return record
 
 
+def _used_sleeves(spec: dict) -> dict[str, dict]:
+    """Sleeves some scenario holds (weight > 0). A sleeve every scenario weights 0 is not loaded or checked,
+    so it cannot change or block the results. Non-numeric weights are kept for PortfolioConfig to reject."""
+
+    def held(weight: object) -> bool:
+        try:
+            return float(weight) != 0  # NaN and negatives stay, so the config check reports them
+        except (TypeError, ValueError):
+            return True
+
+    used = {name for scenario in spec["scenarios"] for name, weight in scenario["weights"].items() if held(weight)}
+    skipped = [name for name in spec["sleeves"] if name not in used]
+    if skipped:
+        print(f"Unused sleeves (weight 0 in every scenario), not loaded: {', '.join(skipped)}")
+    return {name: sleeve for name, sleeve in spec["sleeves"].items() if name in used}
+
+
 def run_portfolio_command(args: argparse.Namespace) -> None:
     output_dir = ensure_output_dir(args.output_dir)
     spec = json.loads(Path(args.spec).read_text(encoding="utf-8"))
-    sleeves_spec: dict[str, dict] = spec["sleeves"]
+    sleeves_spec: dict[str, dict] = _used_sleeves(spec)
     fx_tickers: dict[str, str] = spec.get("fx", {})
     base = spec.get("base_currency", "KRW")
     cash_ticker = spec.get("cash_ticker")
@@ -1302,7 +1319,7 @@ def _apply_proxies(
     fx = proxy_prices[args.proxy_fx]
     prices, starts = splice_proxies(prices, {t: proxy_prices[p] for t, p in proxies.items()}, fx)
     args.proxy_observed = {
-        t: proxy_observations(proxy_prices[proxies[t]], fx, prices.index[prices.index < first], PRICE_MAX_STALE_DAYS)
+        t: proxy_observations(proxy_prices[proxies[t]], fx, prices.index[prices.index < first])
         for t, first in starts.items()
     }
     if traded_value is not None:

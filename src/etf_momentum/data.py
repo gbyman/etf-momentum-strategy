@@ -45,6 +45,7 @@ def load_universe(path: str | Path) -> list[UniverseMember]:
         raise ValueError(f"Universe file is missing columns: {', '.join(sorted(missing))}")
 
     enabled = frame[frame["enabled"].astype(str).str.lower().isin(["1", "true", "yes", "y"])]
+    _reject_duplicate_tickers(enabled, universe_path)
     members = [
         UniverseMember(
             ticker=str(row.ticker).strip(),
@@ -62,6 +63,17 @@ def load_universe(path: str | Path) -> list[UniverseMember]:
     if not members:
         raise ValueError(f"No enabled tickers found in {universe_path}")
     return members
+
+
+def _reject_duplicate_tickers(enabled: pd.DataFrame, path: Path) -> None:
+    """A ticker enabled twice would be ranked and selected twice while holding one weight."""
+    keys = enabled["ticker"].astype(str).str.strip().str.upper()
+    keys = keys[keys != ""]
+    repeated = keys[keys.duplicated(keep=False)]
+    if not repeated.empty:
+        lines = {key: [int(i) + 2 for i in group.index] for key, group in repeated.groupby(repeated, sort=False)}  # +2: header, 1-based
+        detail = "; ".join(f"{key} (rows {', '.join(map(str, rows))})" for key, rows in lines.items())
+        raise ValueError(f"Universe file {path} enables the same ticker more than once: {detail}")
 
 
 def _optional_text(value: object) -> str:
@@ -102,18 +114,17 @@ def _new_since_previous_row(series: pd.Series, index: pd.DatetimeIndex) -> np.nd
     return ~pd.isna(values) & (pd.isna(previous) | (values != previous))
 
 
-def proxy_observations(proxy: pd.Series, fx: pd.Series | None, index: pd.DatetimeIndex, max_stale: int) -> pd.Series:
+def proxy_observations(proxy: pd.Series, fx: pd.Series | None, index: pd.DatetimeIndex) -> pd.Series:
     """Which local dates in `index` a proxy-filled price really observes, under splice_proxies' as-of rule.
 
-    A date counts when the proxy has a new close since the previous local date and the FX rate has had
-    a new value within the last `max_stale` local dates. A proxy that stopped updating is not observed
-    just because its last value is carried forward."""
+    A date counts only when the proxy and the FX rate both have a new value since the previous local
+    date, so the freshness check downstream (at most PRICE_MAX_STALE_DAYS rows since the last True)
+    applies to each source once. A proxy or FX rate that stopped updating is not observed just because its last
+    value is carried forward. On days when only one source is new the row is not counted: this can only
+    make the data look staler than it is, never fresher."""
     seen = _new_since_previous_row(proxy, index)
     if fx is not None:
-        fx_new = _new_since_previous_row(fx, index)
-        positions = np.arange(len(index))
-        last_fx = pd.Series(np.where(fx_new, positions, np.nan)).ffill().to_numpy()
-        seen &= ~np.isnan(last_fx) & (positions - last_fx <= max_stale)
+        seen &= _new_since_previous_row(fx, index)
     return pd.Series(seen, index=index)
 
 

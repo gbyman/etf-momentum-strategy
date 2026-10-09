@@ -141,7 +141,7 @@ def test_proxy_that_stopped_updating_is_not_observed() -> None:
     proxy = pd.Series(100 * np.exp(np.arange(len(us)) * 0.001), index=us)
     fx = pd.Series(1000.0, index=us)
     filled, starts = splice_proxies(raw, {"LOCAL": proxy}, fx)
-    seen = proxy_observations(proxy, fx, local[local < starts["LOCAL"]], max_stale=5)
+    seen = proxy_observations(proxy, fx, local[local < starts["LOCAL"]])
     row = rank_momentum(filled, pd.Timestamp("2020-02-28"), observed=seen.to_frame("LOCAL").reindex(local, fill_value=True)).iloc[0]
     assert not row["price_fresh"] and not row["eligible"]
     assert pd.Timestamp(row["last_observed"]) == pd.Timestamp("2020-01-16")  # the first local day after the last US close
@@ -152,7 +152,7 @@ def test_proxy_observed_each_day_with_us_holidays() -> None:
     us = pd.bdate_range("2018-12-01", "2019-12-31").drop(pd.to_datetime(["2019-07-04", "2019-11-28"]))
     proxy = pd.Series(100.0, index=us)
     fx = pd.Series(1000.0, index=pd.bdate_range("2018-12-01", "2019-12-31"))
-    seen = proxy_observations(proxy, fx, local, max_stale=5)
+    seen = proxy_observations(proxy, fx, local)
     assert seen.sum() == len(local) - 2  # only the days after the two US holidays bring no new close
 
 

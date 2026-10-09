@@ -6,6 +6,7 @@ adds nothing; a different result (e.g. revised market data) is appended as the n
 
 from __future__ import annotations
 
+import csv
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -69,11 +70,34 @@ def _read(path: Path) -> pd.DataFrame:
     if list(frame.columns) != SIGNAL_COLUMNS:
         # New rows are appended without a header in SIGNAL_COLUMNS order, so the file's header must match exactly.
         raise ValueError(f"{path} columns differ from the expected {', '.join(SIGNAL_COLUMNS)}; not overwriting it")
+    _check_rows(path)
     return frame
+
+
+def _check_rows(path: Path) -> None:
+    """Every row must have all SIGNAL_COLUMNS fields; pandas would read a cut-off last row with blanks."""
+    try:
+        with path.open(newline="", encoding="utf-8") as handle:
+            for number, row in enumerate(csv.reader(handle, strict=True), 1):
+                if len(row) != len(SIGNAL_COLUMNS):
+                    raise ValueError(
+                        f"{path} line {number} has {len(row)} fields, expected {len(SIGNAL_COLUMNS)} "
+                        "(incomplete record?); not appending to it"
+                    )
+    except csv.Error as exc:
+        raise ValueError(f"{path} is not valid CSV ({exc}); not appending to it") from exc
 
 
 def _append(path: Path, rows: pd.DataFrame, write_header: bool) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
+    if path.exists() and path.stat().st_size:
+        with path.open("rb") as handle:
+            handle.seek(-1, 2)
+            complete_last_line = handle.read(1) == b"\n"
+        if not complete_last_line:
+            # _read checked every row is complete, so only the line break is missing; never join two rows.
+            with path.open("a", newline="", encoding="utf-8") as handle:
+                handle.write("\n")
     rows.to_csv(path, mode="a", header=write_header, index=False)
 
 

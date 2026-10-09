@@ -75,6 +75,19 @@ def run_backtest(
         raise ValueError(f"Cash ticker {config.cash_ticker} has no price data; pass cash_ticker=None to hold uninvested cash")
     returns = prices.pct_change().fillna(0.0)
     rebalance_dates = _rebalance_dates(prices, config.rebalance)
+    if observed is not None and config.benchmark in observed.columns:
+        # Period ends on the benchmark's real trading days (a stray holiday row, e.g. Yahoo's KRX 12-31,
+        # is never a rebalance date), as in the rank command's month-end. A period where the benchmark
+        # never traded keeps its last row, so the data gap is caught there instead of skipped.
+        traded = observed[config.benchmark].reindex(prices.index, fill_value=False).astype(bool)
+        frequency = _normalize_frequency(config.rebalance)
+        dates = prices.index.to_series()
+        last_traded = dates[traded].resample(frequency).last()
+        last_row = dates.resample(frequency).last().dropna()
+        rebalance_dates = [
+            pd.Timestamp(last_traded[label]) if pd.notna(last_traded.get(label)) else pd.Timestamp(row)
+            for label, row in last_row.items()
+        ]
     min_history = max(
         max(config.momentum.lookbacks) + config.momentum.skip_days + 2,
         config.momentum.sma_window,

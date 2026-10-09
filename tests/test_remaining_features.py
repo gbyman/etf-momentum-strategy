@@ -112,7 +112,8 @@ def test_selection_file_explains_picks_exclusions_and_cash(reason_setup) -> None
     assert picked["ticker"].tolist() == ["A", "C"]
     assert (picked["weighted_momentum"] != "").all() and (picked["trend_strength_vs_sma"] != "").all()
     excluded = sel[sel["status"] == "excluded"].set_index("ticker")
-    assert "가격 정체" in excluded.loc["E", "reason"]
+    assert excluded.loc["E", "reason"].endswith("최근 관측 없음 (마지막 2026-08-14)")
+    assert excluded.loc["E", "last_observed"].startswith("2026-08-14")
     assert "D" not in excluded.index  # ranked below the last pick: not a "why not" candidate
     assert sel.loc[sel["status"] == "group_limit", "reason"].tolist() == ["그룹 제한 (g1)"]
     assert sel.loc[sel["status"] == "cash", "reason"].tolist() == ["조건 통과 후보 부족"]

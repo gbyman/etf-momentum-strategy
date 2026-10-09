@@ -437,14 +437,14 @@ def _month_end_selection(
     passed_over = ranking[(ranking["rank"] <= cutoff) & ~ranking["eligible"].astype(bool)].sort_values("rank")
     if not passed_over.empty:
         reasons = {
-            row.ticker: _exclusion_reason(pd.Series(row._asdict()), config) for row in passed_over.itertuples(index=False)
+            row.ticker: _exclusion_reason(pd.Series(row._asdict()), config, observed=True) for row in passed_over.itertuples(index=False)
         }
         print(" 상위 후보 중 제외: " + ", ".join(f"{t} ({r})" for t, r in reasons.items()))
         rows.extend({"status": "excluded", "ticker": t, "group": groups.get(t, ""), "reason": r} for t, r in reasons.items())
     frame = pd.DataFrame(rows, columns=["status", "rank_in_selection", "ticker", "group", "slots", "reason"])
     frame.insert(0, "as_of", str(as_of.date()))
     frame["name"] = frame["ticker"].map(lambda t: names.get(t, t))
-    for column in ("rank", "weighted_momentum", "trend_strength_vs_sma", "avg_traded_value", "last_price_change"):
+    for column in ("rank", "weighted_momentum", "trend_strength_vs_sma", "avg_traded_value", "last_observed"):
         frame[column] = frame["ticker"].map(lambda t, c=column: metrics[c].get(t) if t in metrics.index else None)
     frame["risk_on"] = picked.risk_on
     frame["market_filter"] = ("on" if picked.risk_on else "off") if args.risk_on_benchmark else "unused"
@@ -457,18 +457,25 @@ EXCLUSION_CHECKS = (
     ("relative_ok", "상대강도 미달"),
     ("liquid", "유동성 부족"),
     ("volatility_ok", "변동성 계산 불가"),
-    ("price_fresh", "가격 정체"),
+    ("price_fresh", "{stale}"),
 )
 
 
-def _exclusion_reason(row: pd.Series, config: MomentumConfig | None = None) -> str:
-    """Failed checks in words, naming the thresholds `config` used (defaults: momentum > 0, above the SMA)."""
+def _exclusion_reason(row: pd.Series, config: MomentumConfig | None = None, observed: bool = False) -> str:
+    """Failed checks in words, naming the thresholds `config` used (defaults: momentum > 0, above the SMA).
+
+    With `observed` (freshness came from the observation table) a stale price is reported as missing
+    observations with the last observation date, not as an unchanged price."""
     config = config or MomentumConfig()
+    stale = "가격 정체"
+    if observed:
+        last = row.get("last_observed")
+        stale = "관측 없음" if last is None or pd.isna(last) else f"최근 관측 없음 (마지막 {pd.Timestamp(last).date()})"
     sma = config.sma_window
     momentum = "모멘텀≤0" if config.min_weighted_momentum == 0 else f"모멘텀<{config.min_weighted_momentum:.1%}"
     trend = f"{sma}일선 아래" if config.min_trend_strength == 0 else f"{sma}일선 대비 {config.min_trend_strength:.1%} 미만"
     return ", ".join(
-        label.format(momentum=momentum, trend=trend) for column, label in EXCLUSION_CHECKS if column in row and not bool(row[column])
+        label.format(momentum=momentum, trend=trend, stale=stale) for column, label in EXCLUSION_CHECKS if column in row and not bool(row[column])
     )
 
 
@@ -873,8 +880,10 @@ def run_walkforward_command(args: argparse.Namespace) -> None:
         raise SystemExit("Not enough history for a single walk-forward window; lower --train-years or use an earlier --start")
 
     period = oos.index
-    benchmark = benchmark.reindex(period).fillna(0.0)
-    fixed = grid_returns.reindex(period).fillna(0.0)
+    benchmark = _benchmark_baseline(benchmark, period)
+    fixed, incomplete = _fixed_baselines(grid_returns, period)
+    if incomplete:
+        print(f"Fixed-config baselines without full out-of-sample returns, left out: {', '.join(incomplete)}")
     fixed_growth = (1 + fixed).prod()
     median_label = fixed_growth.sort_values().index[len(fixed_growth) // 2]
     hindsight_label = fixed_growth.idxmax()
@@ -1477,6 +1486,23 @@ def _require_one_market(tickers: list[str]) -> None:
             f"한국(.KS/.KQ)과 그 외 시장 티커를 한 번에 쓸 수 없습니다 ({detail}). "
             "벤치마크·시장 필터·현금 ETF를 유니버스와 같은 시장으로 지정하세요(예: 미국 지수 필터는 360750.KS)"
         )
+
+
+def _fixed_baselines(grid_returns: pd.DataFrame, period: pd.DatetimeIndex) -> tuple[pd.DataFrame, list[str]]:
+    """Grid configs with returns on every out-of-sample day (missing is not 0%), and the ones left out."""
+    fixed = grid_returns.reindex(period)
+    incomplete = [str(c) for c in fixed.columns[fixed.isna().any()]]
+    if len(incomplete) == len(fixed.columns):
+        raise SystemExit(f"No grid config has returns on every out-of-sample day: {', '.join(incomplete)}")
+    return fixed.drop(columns=incomplete), incomplete
+
+
+def _benchmark_baseline(benchmark: pd.Series, period: pd.DatetimeIndex) -> pd.Series:
+    returns = benchmark.reindex(period)
+    if returns.isna().any():
+        gap = returns.index[returns.isna()]
+        raise SystemExit(f"The benchmark has no return on {len(gap)} out-of-sample day(s), first {gap[0].date()}; check its data")
+    return returns
 
 
 def _require_tickers(prices: pd.DataFrame, required: dict[str, str | None]) -> None:

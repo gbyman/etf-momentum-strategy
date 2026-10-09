@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 import numpy as np
 import pandas as pd
 
-from etf_momentum.signals import MomentumConfig, rank_momentum
+from etf_momentum.signals import MomentumConfig, observed_freshness, rank_momentum
 
 
 # buy_and_hold: target weights are set at each rebalance and then drift with prices until the next one.
@@ -56,6 +56,7 @@ def run_backtest(
     prices: pd.DataFrame,
     config: BacktestConfig,
     traded_value: pd.DataFrame | None = None,
+    observed: pd.DataFrame | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame, dict[str, float]]:
     if config.top_n < 1:
         raise ValueError("top_n must be at least 1")
@@ -102,8 +103,9 @@ def run_backtest(
             config=config.momentum,
             candidate_tickers=config.candidate_tickers,
             traded_value=traded_value,
+            observed=observed,
         )
-        weights = _select_weights(ranking, prices, rebalance_date, config)
+        weights = _select_weights(ranking, prices, rebalance_date, config, observed)
         weights, vol_scale, est_vol = _apply_volatility_target(weights, prices, rebalance_date, config)
         weights = _apply_risky_cap(weights, config)
         traded_notional = float((weights - previous_weights).abs().sum())
@@ -281,7 +283,11 @@ class Selection:
 
 
 def select_holdings(
-    ranking: pd.DataFrame, prices: pd.DataFrame, rebalance_date: pd.Timestamp, config: BacktestConfig
+    ranking: pd.DataFrame,
+    prices: pd.DataFrame,
+    rebalance_date: pd.Timestamp,
+    config: BacktestConfig,
+    observed: pd.DataFrame | None = None,
 ) -> Selection:
     """Market filter, then eligible tickers in rank order under the group limit, up to top_n.
 
@@ -296,6 +302,17 @@ def select_holdings(
         if missing:
             # Never treat an unevaluated market filter as "risk on".
             raise ValueError(f"Market filter ticker(s) without price data: {', '.join(missing)}")
+        if observed is not None:
+            history = prices.loc[:rebalance_date].index
+            stale = [
+                t for t in filters
+                if not observed_freshness(observed[t] if t in observed.columns else None, history)[1]
+            ]
+            if stale:
+                raise ValueError(
+                    f"Market filter ticker(s) without a recent observation at {pd.Timestamp(rebalance_date).date()}: "
+                    f"{', '.join(stale)}"
+                )
         risk_on = any(_above_sma(prices.loc[:rebalance_date, t], config.momentum.sma_window) for t in filters)
     if not risk_on or ranking.empty:
         return Selection(risk_on=risk_on, empty_slots=config.top_n)
@@ -303,17 +320,25 @@ def select_holdings(
     return Selection(risk_on=True, tickers=picked, group_skipped=skipped, empty_slots=config.top_n - len(picked))
 
 
-def previous_month_end(dates: pd.DatetimeIndex, today: pd.Timestamp | None = None) -> pd.Timestamp:
+def previous_month_end(
+    dates: pd.DatetimeIndex, today: pd.Timestamp | None = None, sessions: pd.DatetimeIndex | None = None
+) -> pd.Timestamp:
     """Last trading day of the month before `today`'s month, checked to be really in the data.
 
-    The month counts as complete when its last date in `dates` is the month's last weekday, or when
-    the data continues into the next month (so a holiday month-end such as Korea's 12-31 closure
-    still works). Otherwise the data stopped early and this raises instead of returning a mid-month
-    date; a missing month never falls back to an older one.
+    With exchange `sessions`, that day is the month's last session and it must be in `dates`.
+    Without them, the month counts as complete when its last date in `dates` is the month's last
+    weekday or the data continues into the next month. A missing month never falls back to an older one.
     """
     today = pd.Timestamp(today or pd.Timestamp.today()).normalize()
     dates = pd.DatetimeIndex(dates).sort_values()
     month = today.to_period("M") - 1
+    if sessions is not None:
+        in_month_sessions = pd.DatetimeIndex(sessions)[pd.DatetimeIndex(sessions).to_period("M") == month]
+        if len(in_month_sessions):
+            last_session = in_month_sessions[-1].normalize()
+            if last_session not in dates.normalize():
+                raise ValueError(f"{month} last trading day {last_session.date()} is missing from the data")
+            return last_session
     in_month = dates[dates.to_period("M") == month]
     if in_month.empty:
         raise ValueError(f"No price data for {month} (the month before {today:%Y-%m})")
@@ -330,9 +355,10 @@ def _select_weights(
     prices: pd.DataFrame,
     rebalance_date: pd.Timestamp,
     config: BacktestConfig,
+    observed: pd.DataFrame | None = None,
 ) -> pd.Series:
     weights = pd.Series(0.0, index=prices.columns)
-    selection = select_holdings(ranking, prices, rebalance_date, config)
+    selection = select_holdings(ranking, prices, rebalance_date, config, observed)
     selected = selection.tickers
     if not selected:
         return _cash_weights(weights, config)

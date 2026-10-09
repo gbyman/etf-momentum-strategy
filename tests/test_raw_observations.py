@@ -75,3 +75,70 @@ def test_observed_freshness_counts_trading_rows() -> None:
     assert observed_freshness(mask, index) == (index[3], False)  # 6 rows without an observation
     assert observed_freshness(mask.iloc[:9], index[:9])[1]  # 5 rows: still fresh
     assert observed_freshness(None, index) == (None, False)
+
+
+# Task 3: market filter freshness, backtest pass-through, exchange-calendar month-end
+from etf_momentum.backtest import BacktestConfig, previous_month_end, run_backtest, select_holdings  # noqa: E402
+from etf_momentum.signals import MomentumConfig  # noqa: E402
+
+ELIGIBLE_A = pd.DataFrame({"ticker": ["A"], "eligible": [True]})
+
+
+def test_stale_market_filter_is_an_error() -> None:
+    prices = trending(650)
+    observed = prices.notna()
+    observed.loc[prices.index[-60]:, "BENCH"] = False  # review repro: frozen, unobserved benchmark
+    with pytest.raises(ValueError, match="BENCH"):
+        select_holdings(ELIGIBLE_A, prices, prices.index[-1], BacktestConfig(top_n=1, benchmark="BENCH", risk_on_benchmark=True), observed=observed)
+
+
+def test_one_stale_filter_among_several_is_an_error() -> None:
+    prices = trending(650).assign(US=lambda f: f["BENCH"])
+    observed = prices.notna()
+    observed.loc[prices.index[-30]:, "US"] = False
+    config = BacktestConfig(top_n=1, benchmark="BENCH", risk_on_benchmark=True, risk_on_tickers=("BENCH", "US"))
+    with pytest.raises(ValueError, match="US"):
+        select_holdings(ELIGIBLE_A, prices, prices.index[-1], config, observed=observed)
+
+
+def test_filter_never_observed_yet_is_an_error_not_risk_on() -> None:
+    prices = trending(650)
+    observed = prices.notna()
+    observed["BENCH"] = False
+    with pytest.raises(ValueError, match="BENCH"):
+        select_holdings(ELIGIBLE_A, prices, prices.index[300], BacktestConfig(top_n=1, benchmark="BENCH", risk_on_benchmark=True), observed=observed)
+
+
+def test_run_backtest_excludes_unobserved_candidate() -> None:
+    index = pd.bdate_range("2020-01-01", periods=600)
+    steps = np.arange(600)
+    prices = pd.DataFrame({"A": 100 * 1.002**steps, "B": 100 * 1.001**steps, "BENCH": 100.0, "CASH": 100.0}, index=index)
+    observed = prices.notna()
+    observed.loc[index[300]:, "A"] = False  # A's data stopped; its filled price still trends up
+    _, positions, _ = run_backtest(
+        prices,
+        BacktestConfig(top_n=1, cash_ticker="CASH", benchmark="BENCH", candidate_tickers=("A", "B"),
+                       momentum=MomentumConfig(skip_days=0, sma_window=100)),
+        observed=observed,
+    )
+    late = positions[pd.to_datetime(positions["rebalance_date"]) > index[320]]
+    assert "A" not in ",".join(late["tickers"])
+
+
+SESSIONS = pd.bdate_range("2026-08-01", "2026-10-31").drop(pd.to_datetime(["2026-09-24", "2026-09-25"]))
+
+
+def test_month_end_gap_then_next_month_is_an_error_with_sessions() -> None:
+    with pytest.raises(ValueError, match="2026-09-30"):
+        previous_month_end(pd.to_datetime(["2026-09-15", "2026-10-01"]), pd.Timestamp("2026-10-08"), sessions=SESSIONS)
+
+
+def test_month_end_is_the_last_session() -> None:
+    dates = pd.bdate_range("2026-09-01", "2026-10-07")
+    assert previous_month_end(dates, pd.Timestamp("2026-10-08"), sessions=SESSIONS) == pd.Timestamp("2026-09-30")
+
+
+def test_holiday_row_in_data_does_not_move_the_month_end() -> None:
+    sessions = pd.bdate_range("2025-12-01", "2026-01-31").drop(pd.to_datetime(["2025-12-25", "2025-12-31", "2026-01-01"]))
+    dates = sessions.union(pd.to_datetime(["2025-12-31"]))  # a stray row on the 12-31 closure
+    assert previous_month_end(dates, pd.Timestamp("2026-01-05"), sessions=sessions) == pd.Timestamp("2025-12-30")

@@ -35,3 +35,43 @@ def test_old_filled_price_cache_is_not_reused(tmp_path, monkeypatch) -> None:
     prices = data.download_prices(["X"], start="2021-01-01", end="2021-01-09", cache_dir=tmp_path)
     assert prices["X"].tolist() == [100.0, 101.0]
     assert old.exists()  # left alone
+
+
+# Task 2: candidate freshness from real observations
+from etf_momentum.signals import observed_freshness, rank_momentum  # noqa: E402
+
+
+def trending(days: int = 350) -> pd.DataFrame:
+    index = pd.bdate_range("2024-01-01", periods=days)
+    steps = np.arange(days)
+    return pd.DataFrame({"A": 100 * 1.001**steps, "BENCH": 100 * 1.0005**steps}, index=index)
+
+
+def test_unobserved_candidate_is_stale_even_though_prices_are_filled() -> None:
+    prices = trending()
+    observed = prices.notna()
+    observed.loc[prices.index[-60]:, "A"] = False  # no real observation for 60 days
+    row = rank_momentum(prices, benchmark="BENCH", candidate_tickers=("A",), observed=observed).iloc[0]
+    assert not row["price_fresh"] and not row["eligible"]
+    assert pd.Timestamp(row["last_observed"]) == prices.index[-61]
+
+
+def test_observed_flat_price_is_fresh() -> None:
+    prices = trending()
+    prices.loc[prices.index[-10]:, "A"] = prices.loc[prices.index[-11], "A"]  # really unchanged for 10 days
+    row = rank_momentum(prices, benchmark="BENCH", candidate_tickers=("A",), observed=prices.notna()).iloc[0]
+    assert row["price_fresh"]  # observed every day, so not stale
+
+
+def test_candidate_missing_from_observation_table_is_stale_not_an_error() -> None:
+    prices = trending()
+    row = rank_momentum(prices, benchmark="BENCH", candidate_tickers=("A",), observed=prices[["BENCH"]].notna()).iloc[0]
+    assert not row["price_fresh"]
+
+
+def test_observed_freshness_counts_trading_rows() -> None:
+    index = pd.bdate_range("2024-01-01", periods=10)
+    mask = pd.Series([True] * 4 + [False] * 6, index=index)
+    assert observed_freshness(mask, index) == (index[3], False)  # 6 rows without an observation
+    assert observed_freshness(mask.iloc[:9], index[:9])[1]  # 5 rows: still fresh
+    assert observed_freshness(None, index) == (None, False)

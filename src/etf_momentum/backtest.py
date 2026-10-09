@@ -15,6 +15,10 @@ ACCOUNTING_CHOICES = ("buy_and_hold", "daily_rebalanced")
 # same_close: trade at the signal day's close. next_close: trade at the next trading day's close; the
 # previous holdings keep earning that day (closer to "check the month-end signal, trade next session").
 EXECUTION_CHOICES = ("same_close", "next_close")
+
+
+class StaleDataError(ValueError):
+    """A market filter without (recent) data: a data problem that must stop the run, not skip a config."""
 EXECUTION_ASSUMPTION = (
     "Signals use closes up to and including the rebalance date; trades fill at that same close; "
     "returns accrue from the next trading day; transaction costs are deducted on the first holding day."
@@ -301,7 +305,7 @@ def select_holdings(
         missing = [t for t in filters if t not in prices.columns or prices[t].loc[:rebalance_date].dropna().empty]
         if missing:
             # Never treat an unevaluated market filter as "risk on".
-            raise ValueError(f"Market filter ticker(s) without price data: {', '.join(missing)}")
+            raise StaleDataError(f"Market filter ticker(s) without price data: {', '.join(missing)}")
         if observed is not None:
             history = prices.loc[:rebalance_date].index
             stale = [
@@ -309,7 +313,7 @@ def select_holdings(
                 if not observed_freshness(observed[t] if t in observed.columns else None, history)[1]
             ]
             if stale:
-                raise ValueError(
+                raise StaleDataError(
                     f"Market filter ticker(s) without a recent observation at {pd.Timestamp(rebalance_date).date()}: "
                     f"{', '.join(stale)}"
                 )

@@ -159,14 +159,13 @@ def test_required_ticker_without_recent_observation_stops() -> None:
     cli._require_fresh(observed, {"benchmark": "BENCH", "cash": None})
 
 
-def test_proxy_filled_history_counts_as_observed(monkeypatch) -> None:
+def test_proxy_filled_history_counts_as_observed() -> None:
     index = pd.bdate_range("2026-01-01", periods=10)
     raw = pd.DataFrame({"K": [np.nan] * 5 + [10.0] * 5, "BENCH": 1.0}, index=index)
-    monkeypatch.setattr(cli, "download_prices", lambda tickers, **kw: raw[[t for t in tickers if t in raw]])
     prices = raw.copy()
     prices.loc[index[:5], "K"] = 9.0  # spliced from a proxy
-    args = argparse.Namespace(end=None, cache_dir="data", refresh=False, proxy_starts={"K": index[5]})
-    observed = cli._observations(["K", "BENCH"], None, args, prices)
+    args = argparse.Namespace(proxy_starts={"K": index[5]})
+    observed = cli._observations(raw, args, prices)
     assert observed["K"].all()
 
 
@@ -203,3 +202,84 @@ def test_portfolio_ticker_sleeve_with_a_raw_gap_stops(tmp_path, monkeypatch) -> 
     monkeypatch.setattr(sys, "argv", ["etf-momentum", "portfolio", "--spec", str(tmp_path / "spec.json"), "--output-dir", str(tmp_path / "o")])
     with pytest.raises(SystemExit, match="NaN"):
         cli.main()
+
+
+# Final review fixes
+from etf_momentum.backtest import StaleDataError  # noqa: E402
+
+
+def test_observations_reuse_the_first_download_under_refresh(tmp_path, monkeypatch) -> None:
+    index = pd.bdate_range("2026-01-01", periods=10)
+    both = pd.DataFrame(1.0, index=index, columns=pd.MultiIndex.from_product([["Close"], ["BENCH", "CASH"]]))
+    bench_only = both.drop(columns=("Close", "CASH"))
+    calls = []
+
+    def fake(**kw):
+        calls.append(1)
+        return both if len(calls) == 1 else bench_only  # a second download would lose CASH
+
+    monkeypatch.setattr(data.yf, "download", fake)
+    args = argparse.Namespace(end=None, cache_dir=tmp_path, refresh=True, proxy_starts={})
+    prices, raw = cli._download(["BENCH", "CASH"], None, args)
+    observed = cli._observations(raw, args, prices)
+    assert len(calls) == 1 and observed["CASH"].all()
+
+
+def test_stale_or_missing_filter_raises_stale_data_error() -> None:
+    prices = trending(650)
+    observed = prices.notna()
+    observed.loc[prices.index[-60]:, "BENCH"] = False
+    rule = BacktestConfig(top_n=1, benchmark="BENCH", risk_on_benchmark=True)
+    with pytest.raises(StaleDataError):
+        select_holdings(ELIGIBLE_A, prices, prices.index[-1], rule, observed=observed)
+    with pytest.raises(StaleDataError):
+        select_holdings(ELIGIBLE_A, prices[["A"]], prices.index[-1], rule)
+
+
+def test_walkforward_stops_on_a_mid_history_filter_gap(tmp_path, monkeypatch) -> None:
+    import sys
+
+    index = pd.bdate_range("2012-01-02", "2020-12-31")
+    steps = np.arange(len(index))
+    prices = pd.DataFrame({"A": 100 * 1.0004**steps, "B": 100 * 1.0003**steps, "BENCH": 100 * 1.0002**steps, "CASH": 100.0}, index=index)
+    raw = prices.copy()
+    raw.loc["2016-03-01":"2016-04-15", "BENCH"] = np.nan  # a past gap; the last row is fresh
+    monkeypatch.setattr(
+        cli, "download_prices", lambda tickers, raw=False, **kw: (lambda f: f if raw else f.ffill())(raw_prices[[t for t in tickers if t in raw_prices]])
+    )
+    raw_prices = raw
+    universe = tmp_path / "u.csv"
+    universe.write_text("ticker,name,category,enabled\nA,A,X,1\nB,B,X,1\nCASH,Cash,Cash,1\n")
+    monkeypatch.setattr(sys, "argv", [
+        "etf-momentum", "walkforward", "--universe", str(universe), "--benchmark", "BENCH", "--cash", "CASH",
+        "--top-n-grid", "1", "--weighting-grid", "equal", "--max-per-group-grid", "0", "--risk-on-grid", "on",
+        "--relative-strength-grid", "off", "--output-dir", str(tmp_path / "wf"),
+    ])
+    with pytest.raises(SystemExit, match="BENCH"):
+        cli.main()
+
+
+def test_month_end_missing_from_every_ticker_hints_at_an_outdated_calendar(monkeypatch) -> None:
+    sessions = pd.bdate_range("2026-08-01", "2026-10-31")  # the calendar thinks 09-30 is a session
+    monkeypatch.setattr(cli, "_month_end_sessions", lambda benchmark, today: sessions)
+    index = sessions[sessions <= "2026-10-07"].drop(pd.Timestamp("2026-09-30"))  # nobody traded 09-30
+    prices = pd.DataFrame({"BENCH": 1.0}, index=index)
+    args = argparse.Namespace(benchmark="BENCH", selection_today=None)
+    monkeypatch.setattr(cli, "_selection_today", lambda a: pd.Timestamp("2026-10-08"))
+    with pytest.raises(SystemExit, match="exchange-calendars"):
+        cli._month_end_date(prices, prices.notna(), args)
+
+
+def test_month_end_missing_only_for_the_benchmark_asks_for_a_refresh(monkeypatch) -> None:
+    sessions = pd.bdate_range("2026-08-01", "2026-10-31")
+    monkeypatch.setattr(cli, "_month_end_sessions", lambda benchmark, today: sessions)
+    monkeypatch.setattr(cli, "_selection_today", lambda a: pd.Timestamp("2026-10-08"))
+    index = sessions[sessions <= "2026-10-07"]
+    prices = pd.DataFrame({"BENCH": 1.0, "A": 1.0}, index=index)
+    observed = prices.notna()
+    observed.loc["2026-09-30", "BENCH"] = False
+    with pytest.raises(SystemExit, match="--refresh") as exc:
+        cli._month_end_date(prices, observed, argparse.Namespace(benchmark="BENCH"))
+    assert "exchange-calendars" not in str(exc.value)
+    observed.loc["2026-09-30", "BENCH"] = True
+    assert cli._month_end_date(prices, observed, argparse.Namespace(benchmark="BENCH")) == pd.Timestamp("2026-09-30")

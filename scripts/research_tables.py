@@ -54,7 +54,8 @@ FILTER_TABLE = [
 # Full Korean ETF universe (current listings only: survivorship bias), compared with the 60-ETF pension universe
 FULL_UNIVERSE_TABLE = [
     ("연금저축 유니버스 60개 (기존)", "kr_pension_pension_10eok_10bp_robustgrid_tvoff"),
-    ("국내 상장 ETF 전체 (비교용)", "kr_all_pension_10eok_10bp_robustgrid_tvoff"),
+    ("국내 상장 ETF 전체, 그룹당 1개 (비교용)", "kr_all_pension_10eok_10bp_robustgrid_tvoff"),
+    ("국내 상장 ETF 전체, 그룹 제한 없음 (현재 전략)", "kr_all_pension_10eok_10bp_nogroup_tvoff"),
 ]
 EXECUTION_SCENARIOS = [
     ("연금 모멘텀(워크포워드), 같은 날 종가", "WF_same 100"),

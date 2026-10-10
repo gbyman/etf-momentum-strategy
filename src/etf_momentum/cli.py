@@ -611,7 +611,7 @@ def run_backtest_command(args: argparse.Namespace) -> None:
         candidate_tickers=_candidates(members, args),
         **_group_config(members, args),
     )
-    equity, positions, metrics = run_backtest(prices, config, traded_value=traded_value, observed=observed)
+    equity, positions, metrics = run_backtest(prices, config, traded_value=traded_value, observed=observed, sessions=_exchange_sessions(args.benchmark))
     ranking = rank_momentum(
         prices,
         benchmark=args.benchmark,
@@ -697,7 +697,7 @@ def run_compare_command(args: argparse.Namespace) -> None:
                                 **group_config,
                             )
                             try:
-                                _, positions, metrics = run_backtest(prices, config, traded_value=traded_value, observed=observed)
+                                _, positions, metrics = run_backtest(prices, config, traded_value=traded_value, observed=observed, sessions=_exchange_sessions(args.benchmark))
                             except StaleDataError as exc:
                                 raise SystemExit(f"Stale market filter data: {exc}. Rerun with --refresh or check the ticker") from exc
                             except ValueError as exc:
@@ -837,7 +837,7 @@ def run_walkforward_command(args: argparse.Namespace) -> None:
             max_per_group=max_per_group if max_per_group > 0 else None,
         )
         try:
-            equity, _, _ = run_backtest(prices, config, traded_value=traded_value, observed=observed)
+            equity, _, _ = run_backtest(prices, config, traded_value=traded_value, observed=observed, sessions=_exchange_sessions(args.benchmark))
         except StaleDataError as exc:
             raise SystemExit(f"Stale market filter data: {exc}. Rerun with --refresh or check the ticker") from exc
         except ValueError as exc:

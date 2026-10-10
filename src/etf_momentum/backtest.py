@@ -61,7 +61,13 @@ def run_backtest(
     config: BacktestConfig,
     traded_value: pd.DataFrame | None = None,
     observed: pd.DataFrame | None = None,
+    sessions: pd.DatetimeIndex | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame, dict[str, float]]:
+    """Backtest the monthly (or `rebalance`) rotation.
+
+    With `observed`, rebalance and next_close trade dates are the benchmark's real trading days, and a
+    held asset or the benchmark without a close for more than PRICE_MAX_STALE_DAYS rows stops the run.
+    With exchange `sessions` as well, a period whose last session has no benchmark close is an error."""
     if config.top_n < 1:
         raise ValueError("top_n must be at least 1")
     if config.execution not in EXECUTION_CHOICES:
@@ -75,6 +81,7 @@ def run_backtest(
         raise ValueError(f"Cash ticker {config.cash_ticker} has no price data; pass cash_ticker=None to hold uninvested cash")
     returns = prices.pct_change().fillna(0.0)
     rebalance_dates = _rebalance_dates(prices, config.rebalance)
+    trade_positions = np.arange(len(prices.index))
     if observed is not None and config.benchmark in observed.columns:
         # Period ends on the benchmark's real trading days (a stray holiday row, e.g. Yahoo's KRX 12-31,
         # is never a rebalance date), as in the rank command's month-end. A period where the benchmark
@@ -88,12 +95,16 @@ def run_backtest(
             pd.Timestamp(last_traded[label]) if pd.notna(last_traded.get(label)) else pd.Timestamp(row)
             for label, row in last_row.items()
         ]
+        trade_positions = np.flatnonzero(traded.to_numpy())
+        if sessions is not None:
+            _check_period_end_sessions(sessions, dates[traded], frequency, config.benchmark)
     min_history = max(
         max(config.momentum.lookbacks) + config.momentum.skip_days + 2,
         config.momentum.sma_window,
         config.momentum.volatility_window + 1,  # volatility needs `window` daily returns
     )
-    rebalance_dates = [date for date in rebalance_dates if prices.index.get_loc(date) >= min_history]
+    # get_loc is 0-based: position p has p + 1 rows of history.
+    rebalance_dates = [date for date in rebalance_dates if prices.index.get_loc(date) + 1 >= min_history]
     if len(rebalance_dates) < 2:
         raise ValueError("Not enough rebalance dates after warm-up period")
 
@@ -107,9 +118,9 @@ def run_backtest(
         # Holdings set at the trade close earn from the next day until the next trade close (inclusive).
         lag = 1 if config.execution == "next_close" else 0
         last_pos = len(prices.index) - 1
-        trade_pos = prices.index.get_loc(rebalance_date) + lag
+        trade_pos = _trade_position(prices.index.get_loc(rebalance_date), lag, trade_positions, last_pos)
         start_pos = trade_pos + 1
-        end_pos = min(prices.index.get_loc(next_rebalance_date) + lag, last_pos)
+        end_pos = _trade_position(prices.index.get_loc(next_rebalance_date), lag, trade_positions, last_pos)
         if start_pos > end_pos:
             continue
         holding_dates = prices.index[start_pos : end_pos + 1]
@@ -127,7 +138,7 @@ def run_backtest(
         weights, vol_scale, est_vol = _apply_volatility_target(weights, prices, rebalance_date, config)
         weights = _apply_risky_cap(weights, config)
         if since_observed is not None:
-            _check_held_observations(since_observed, weights, holding_dates)
+            _check_held_observations(since_observed, weights, holding_dates, also=config.benchmark)
         traded_notional = float((weights - previous_weights).abs().sum())
         turnover = traded_notional / 2.0
         cost = traded_notional * (config.transaction_cost_bps / 10_000.0)
@@ -460,11 +471,44 @@ def _rows_since_observation(observed: pd.DataFrame, index: pd.DatetimeIndex) -> 
     return pd.DataFrame(positions - last, index=index, columns=observed.columns)
 
 
-def _check_held_observations(since_observed: pd.DataFrame, weights: pd.Series, holding_dates: pd.DatetimeIndex) -> None:
-    """A held asset whose closes stop mid-holding would earn a made-up 0%; stop instead.
+def _trade_position(signal_pos: int, lag: int, trade_positions: np.ndarray, last_pos: int) -> int:
+    """Trade at the signal row (same_close) or at the `lag`-th later benchmark trading row (next_close)."""
+    if lag == 0:
+        return signal_pos
+    later = trade_positions[trade_positions > signal_pos]
+    return int(later[lag - 1]) if len(later) >= lag else last_pos
+
+
+def _check_period_end_sessions(sessions: pd.DatetimeIndex, traded_days: pd.Series, frequency: str, benchmark: str) -> None:
+    """Every complete period's last exchange session must have a benchmark close (as rank requires).
+
+    The data's last period (possibly still open or not yet published) and periods before the benchmark's
+    first close are not checked."""
+    if traded_days.empty:
+        return
+    days = pd.DatetimeIndex(sessions)
+    days = days[(days >= traded_days.iloc[0]) & (days <= traded_days.index[-1])]
+    last_session = days.to_series().resample(frequency).last().dropna()
+    last_traded = traded_days.resample(frequency).last()
+    for label, session in list(last_session.items())[:-1]:
+        traded = last_traded.get(label)
+        if pd.isna(traded) or pd.Timestamp(traded) < pd.Timestamp(session):
+            raise StaleDataError(
+                f"{pd.Timestamp(session).date()} is the period's last trading day but {benchmark} has no close; "
+                "fill the gap or check the data"
+            )
+
+
+def _check_held_observations(
+    since_observed: pd.DataFrame, weights: pd.Series, holding_dates: pd.DatetimeIndex, also: str | None = None
+) -> None:
+    """A held asset whose closes stop mid-holding would earn a made-up 0%; stop instead. `also` (the
+    benchmark) is checked the same way: its returns are the comparison curve.
 
     Before an asset's first close (e.g. the cash ETF before listing) it is uninvested cash, as before."""
     held = [t for t in weights.index[weights > 0] if t in since_observed.columns]
+    if also and also in since_observed.columns and also not in held:
+        held.append(also)
     gaps = since_observed.loc[holding_dates, held]
     stale = gaps.columns[(gaps > PRICE_MAX_STALE_DAYS).any()]
     if len(stale):

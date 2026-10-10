@@ -59,3 +59,39 @@ def drop_unpriced(
     if missing_required:
         raise ValueError(f"No Yahoo prices for required {', '.join(missing_required)}; not building the universe")
     return listing[~listing["ticker"].isin(dropped)].reset_index(drop=True), dropped
+
+
+def recent_returns(raw: pd.DataFrame, benchmark: str = BENCHMARK, window: int = 252) -> pd.DataFrame:
+    """Daily returns over the last `window` days the benchmark really traded; gaps stay NaN."""
+    traded = raw[raw[benchmark].notna()]
+    return traded.pct_change(fill_method=None).iloc[1:].tail(window)
+
+
+def correlation_groups(returns: pd.DataFrame, threshold: float = 0.9, min_overlap: int = 63) -> pd.Series:
+    """Complete-linkage clusters: a group's every pair has correlation >= threshold.
+
+    Pairs observed together on fewer than `min_overlap` days, or with a flat series, have no
+    correlation and are never merged. The most correlated pair of groups merges first; ties go to the
+    sorted ticker order, so the result does not depend on column order. Returns a group number per
+    ticker (sorted), or NA for an ETF alone."""
+    tickers = sorted(returns.columns)
+    corr = returns[tickers].corr(min_periods=min_overlap).to_numpy(dtype=float)
+    link = np.where(np.isnan(corr), -np.inf, corr)  # group-to-group similarity = weakest pair
+    np.fill_diagonal(link, -np.inf)
+    members = {i: [i] for i in range(len(tickers))}
+    while members:
+        i, j = np.unravel_index(int(np.argmax(link)), link.shape)
+        if link[i, j] < threshold:
+            break
+        i, j = min(i, j), max(i, j)
+        members[i] += members.pop(j)
+        merged = np.minimum(link[i], link[j])
+        link[i, :] = merged
+        link[:, i] = merged
+        link[i, i] = -np.inf
+        link[j, :] = -np.inf
+        link[:, j] = -np.inf
+    labels = pd.Series(pd.NA, index=tickers, dtype="object")
+    for number, (_, group) in enumerate(sorted((g[0], g) for g in members.values() if len(g) > 1)):
+        labels.iloc[sorted(group)] = number
+    return labels

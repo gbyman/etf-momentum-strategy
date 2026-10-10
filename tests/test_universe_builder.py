@@ -67,3 +67,65 @@ def test_unpriced_cash_etf_is_an_error() -> None:
     prices = pd.DataFrame({"069500.KS": [1.0]}, index=pd.to_datetime(["2026-01-02"]))
     with pytest.raises(ValueError, match="153130.KS"):
         drop_unpriced(listing, prices)
+
+
+# Task 2: correlation groups (complete linkage)
+from etf_momentum.universe_builder import correlation_groups, recent_returns  # noqa: E402
+
+
+def correlated(n: int = 252, seed: int = 0) -> pd.DataFrame:
+    rng = np.random.default_rng(seed)
+    base = rng.normal(0, 0.01, n)
+    other = rng.normal(0, 0.01, n)
+    noise = lambda scale: rng.normal(0, scale, n)  # noqa: E731
+    return pd.DataFrame(
+        {
+            "A": base + noise(0.001),
+            "B": base + noise(0.001),
+            "C": other + noise(0.001),
+            "D": other + noise(0.001),
+            "E": rng.normal(0, 0.01, n),
+        },
+        index=pd.bdate_range("2025-01-01", periods=n),
+    )
+
+
+def test_highly_correlated_pairs_share_a_group_and_others_stay_alone() -> None:
+    groups = correlation_groups(correlated())
+    assert groups["A"] == groups["B"] and groups["C"] == groups["D"] and groups["A"] != groups["C"]
+    assert pd.isna(groups["E"])
+
+
+def test_chain_does_not_link_the_ends() -> None:
+    n = 400
+    rng = np.random.default_rng(1)
+    x, y = rng.normal(0, 0.01, n), rng.normal(0, 0.01, n)
+    # corr(A,B) and corr(B,C) about 0.95, corr(A,C) about 0.81
+    a = x
+    b = x * 0.95 + y * 0.31
+    c = x * 0.81 + y * 0.59
+    groups = correlation_groups(pd.DataFrame({"A": a, "B": b, "C": c}))
+    assert not (pd.notna(groups["A"]) and groups["A"] == groups["C"])
+
+
+def test_short_or_flat_history_is_never_grouped() -> None:
+    returns = correlated()
+    returns.loc[returns.index[:-40], "B"] = np.nan  # only 40 days: below min_overlap
+    returns["F"] = 0.0  # flat price: correlation undefined
+    groups = correlation_groups(returns)
+    assert pd.isna(groups["B"]) and pd.isna(groups["F"]) and pd.isna(groups["A"])
+
+
+def test_groups_do_not_depend_on_column_order() -> None:
+    returns = correlated()
+    first = correlation_groups(returns)
+    second = correlation_groups(returns[["E", "D", "C", "B", "A"]])
+    pd.testing.assert_series_equal(first, second)
+
+
+def test_recent_returns_use_benchmark_trading_days() -> None:
+    index = pd.bdate_range("2025-01-01", periods=300)
+    raw = pd.DataFrame({"069500.KS": 100.0, "X": np.linspace(100, 130, 300)}, index=index)
+    raw.loc[index[-1], "069500.KS"] = np.nan  # a row the benchmark did not trade (stray holiday row)
+    returns = recent_returns(raw, window=252)
+    assert len(returns) == 252 and returns.index[-1] == index[-2]

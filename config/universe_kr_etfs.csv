@@ -14,8 +14,8 @@ ticker,name,category,enabled,group
 139240.KS,TIGER 200 Steel Materials,Korea Sector,1,kr_steel
 139250.KS,TIGER 200 Energy & Chemicals,Korea Sector,1,kr_energy_chem
 139270.KS,TIGER 200 Financials,Korea Sector,1,kr_financials
-139280.KS,TIGER 200 Consumer Discretionary,Korea Sector,1,
-139290.KS,TIGER 200 Energy & Chemicals,Korea Sector,1,
+139280.KS,TIGER Defensive,Korea Sector,1,
+139290.KS,TIGER 200 Consumer Discretionary,Korea Sector,1,
 091170.KS,KODEX Banks,Korea Sector,1,kr_financials
 102970.KS,KODEX Securities,Korea Sector,1,
 117460.KS,KODEX Energy & Chemicals,Korea Sector,1,kr_energy_chem

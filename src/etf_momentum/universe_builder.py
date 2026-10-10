@@ -6,8 +6,10 @@ filter_etf_list -> drop_unpriced -> recent_returns -> correlation_groups -> buil
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
+import shutil
 from pathlib import Path
 
 import numpy as np
@@ -133,16 +135,32 @@ def build_universe(listing: pd.DataFrame, groups: pd.Series, proxies: dict[str, 
 
 
 def write_universe(universe: pd.DataFrame, meta: dict, output: Path) -> None:
-    """Write the CSV and its .meta.json through temporary files, so a failure leaves the old files."""
+    """Write the CSV and its .meta.json as a pair.
+
+    Both go to temporary files first. If replacing the meta fails after the CSV was replaced, the old
+    CSV is put back, so a failure leaves the old pair. The meta records the CSV's SHA-256, so a pair
+    torn by a crash between the two replaces can still be detected."""
     output = Path(output)
     meta_path = output.with_name(f"{output.stem}.meta.json")
     csv_tmp = output.with_name(f"{output.name}.tmp")
     meta_tmp = meta_path.with_name(f"{meta_path.name}.tmp")
+    backup = output.with_name(f"{output.name}.bak")
     try:
-        meta_tmp.write_text(json.dumps(meta, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         universe.to_csv(csv_tmp, index=False)
+        meta = {**meta, "csv_sha256": hashlib.sha256(csv_tmp.read_bytes()).hexdigest()}
+        meta_tmp.write_text(json.dumps(meta, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        had_old = output.exists()
+        if had_old:
+            shutil.copy2(output, backup)
         os.replace(csv_tmp, output)
-        os.replace(meta_tmp, meta_path)
+        try:
+            os.replace(meta_tmp, meta_path)
+        except BaseException:
+            if had_old:
+                os.replace(backup, output)
+            else:
+                output.unlink(missing_ok=True)
+            raise
     finally:
-        for path in (csv_tmp, meta_tmp):
+        for path in (csv_tmp, meta_tmp, backup):
             path.unlink(missing_ok=True)

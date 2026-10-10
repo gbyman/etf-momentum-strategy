@@ -150,3 +150,37 @@ def test_portfolio_cash_gap_stops_when_cash_is_held(tmp_path, monkeypatch) -> No
 
 def test_portfolio_cash_gap_is_ignored_when_no_scenario_holds_cash(tmp_path, monkeypatch) -> None:
     run_portfolio_cli(tmp_path, monkeypatch, leverage=1.0)
+
+
+# N06: the universe CSV and its meta are replaced as a pair
+def test_failed_meta_replace_keeps_the_old_pair(tmp_path, monkeypatch) -> None:
+    import hashlib
+    import json
+    import os
+
+    import etf_momentum.universe_builder as builder
+
+    output = tmp_path / "universe_kr_all.csv"
+    output.write_text("OLD_CSV\n")
+    (tmp_path / "universe_kr_all.meta.json").write_text('{"old": true}')
+    universe = pd.DataFrame({"ticker": ["NEW"]})
+    real_replace = os.replace
+    calls = []
+
+    def flaky_replace(src, dst):
+        calls.append(dst)
+        if str(dst).endswith(".meta.json"):
+            raise OSError("disk full")
+        real_replace(src, dst)
+
+    monkeypatch.setattr(builder.os, "replace", flaky_replace)
+    with pytest.raises(OSError):
+        builder.write_universe(universe, {"built_at": "new"}, output)
+    assert output.read_text() == "OLD_CSV\n"
+    assert json.loads((tmp_path / "universe_kr_all.meta.json").read_text()) == {"old": True}
+    assert not [p for p in tmp_path.iterdir() if p.name.endswith((".tmp", ".bak"))]
+
+    monkeypatch.setattr(builder.os, "replace", real_replace)
+    builder.write_universe(universe, {"built_at": "new"}, output)
+    meta = json.loads((tmp_path / "universe_kr_all.meta.json").read_text())
+    assert meta["csv_sha256"] == hashlib.sha256(output.read_bytes()).hexdigest()

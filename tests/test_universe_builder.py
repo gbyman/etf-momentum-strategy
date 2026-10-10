@@ -181,3 +181,10 @@ def test_write_universe_replaces_files_and_keeps_old_on_failure(tmp_path) -> Non
     with pytest.raises(TypeError):
         write_universe(universe, {"bad": object()}, output)  # meta not JSON-serializable
     assert output.read_text() == before and not list(tmp_path.glob("*.tmp"))
+
+
+# Final review: Naver may send an empty or dash traded value
+@pytest.mark.parametrize("amount", ["", "-", "n/a"])
+def test_non_numeric_traded_value_becomes_zero(amount) -> None:
+    listing, _ = filter_etf_list([*ITEMS, item("999990", "NEW ETF", 2, amount)])
+    assert listing.set_index("ticker").loc["999990.KS", "traded_value"] == 0.0

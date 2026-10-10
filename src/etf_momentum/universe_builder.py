@@ -42,8 +42,7 @@ def filter_etf_list(items: list[dict], always_include: tuple[str, ...] = REQUIRE
             if any(part in name.upper() for part in EXCLUDED_NAME_PARTS):
                 excluded["name"] += 1
                 continue
-        amount = entry.get("amonut")
-        traded = float(amount) if amount is not None and pd.notna(amount) else 0.0
+        traded = float(pd.to_numeric(pd.Series([entry.get("amonut")]), errors="coerce").fillna(0.0).iloc[0])
         rows[ticker] = {"ticker": ticker, "name": name, "tab": tab, "traded_value": traded}
     missing = [t for t in always_include if t not in rows]
     if missing:

@@ -1,8 +1,8 @@
 {
   "id": "retirement",
-  "version": 1,
-  "description": "IRP·DC: 상위 4개, 그룹당 1개, KODEX 200 시장 필터, 유동성 10억 원",
-  "universe": "config/universe_kr_pension.csv",
+  "version": 2,
+  "description": "IRP·DC: 국내 상장 ETF 전체(파생형 제외), 상위 4개, 그룹당 1개, KODEX 200 시장 필터, 유동성 10억 원",
+  "universe": "config/universe_kr_all.csv",
   "account": "retirement",
   "benchmark": "069500.KS",
   "cash": "153130.KS",

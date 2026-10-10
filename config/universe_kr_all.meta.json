@@ -1,0 +1,25 @@
+{
+  "built_at": "2026-10-10T16:31:43+09:00",
+  "source": "https://finance.naver.com/api/sise/etfItemList.nhn",
+  "naver_etfs": 1172,
+  "excluded": {
+    "tab_3": 37,
+    "tab_6": 169,
+    "tab_7": 124,
+    "name": 53,
+    "duplicate": 0
+  },
+  "no_yahoo_prices": [
+    "265690.KS"
+  ],
+  "etfs": 788,
+  "price_data_last_date": "2026-10-08",
+  "groups": 96,
+  "etfs_in_groups": 485,
+  "group_rule": {
+    "window_days": 252,
+    "min_overlap_days": 63,
+    "min_correlation": 0.9,
+    "linkage": "complete"
+  }
+}

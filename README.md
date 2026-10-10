@@ -410,6 +410,26 @@ uv run python scripts/research_tables.py --end 2025-02-28
 
 모든 표에 같은 기준(워크포워드 기준일 시작, 각 시장의 현금 ETF를 무위험 수익률로 사용, 각 시장의 거래일)을 적용해 `results/research_tables.md`로 저장합니다.
 
+## 전체 ETF 유니버스 (연금 전략 기본)
+
+연금 전략 파일(`config/strategies/pension.json`, `retirement.json`, version 2)은 `config/universe_kr_all.csv`를 씁니다. 네이버 금융의 국내 상장 ETF 전체 목록에서 만든 유니버스입니다(2026-10-10 기준 1,172개 중 788개).
+
+- 제외: 레버리지·인버스(네이버 '국내 파생' 분류와, 이름에 레버리지·인버스·2X가 들어간 ETF), 채권·금리·머니마켓, 채권혼합·TDF('기타' 분류). 커버드콜·해외 합성·선물형·원자재는 포함합니다. 현금 ETF(153130)와 벤치마크(069500)는 항상 넣습니다. 야후에서 가격을 받을 수 없는 ETF는 뺍니다.
+- 그룹: KODEX 200이 거래된 최근 252일의 일간 수익률 상관계수가 0.9 이상인 ETF끼리 묶습니다. 그룹 안의 **모든 쌍**이 0.9 이상이어야 합니다(완전 연결). 그룹 이름은 그룹에서 거래대금이 가장 큰 ETF 이름입니다. 함께 거래된 날이 63일 미만이면 묶지 않습니다.
+- 계좌: 연금저축은 전부 매수 가능으로 봅니다. 퇴직연금은 이름에 '합성'이나 '선물'이 있으면 제외합니다(파생형 ETF 제한을 이름으로 근사). 실제로 살 수 없는 종목이 선정되면 매수하지 않으면 됩니다.
+- 상장 전 대체 이력(프록시)은 기존 60개 유니버스에 있던 9개 ETF만 씁니다.
+- 생성 정보(개수, 제외 사유, 야후 누락 티커, 그룹 수)는 `config/universe_kr_all.meta.json`에 남습니다.
+
+매달 초 다음 순서로 실행합니다. 새로 상장한 ETF가 들어가고 그룹이 다시 계산됩니다.
+
+```bash
+uv run python scripts/build_universe.py   # 유니버스 갱신
+git add config/universe_kr_all.* && git commit -m "Rebuild ETF universe"   # 커밋해야 신호 기록의 code_dirty가 false
+uv run etf-momentum rank --strategy config/strategies/pension.json
+```
+
+과거 검증에는 주의가 필요합니다. 목록에는 지금 상장된 ETF만 있어 상장폐지 ETF가 빠지고(생존 편향), 그룹도 현재 시점 상관으로 정합니다. 그래서 백테스트 결과는 비교용입니다. 연구 문서의 기준 수치는 기존 60개 유니버스(`config/universe_kr_pension.csv`, 연구 재현용으로 유지) 결과입니다.
+
 ## ETF 유니버스 수정
 
 `config/universe_us_sectors.csv`를 복사해서 원하는 ETF 목록으로 바꾸면 됩니다.

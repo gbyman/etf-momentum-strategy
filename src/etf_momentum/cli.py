@@ -39,7 +39,7 @@ from etf_momentum.portfolio import PortfolioConfig, annualized_cost, run_portfol
 from etf_momentum.records import record_signal
 from etf_momentum.reporting import _code_revision, ensure_output_dir, save_equity_chart, save_json, save_run_metadata
 from etf_momentum.strategy import Strategy, StrategyError, load_strategy
-from etf_momentum.signals import LIQUIDITY_MAX_STALE_DAYS, RANK_BY_CHOICES, MomentumConfig, observed_freshness, rank_momentum
+from etf_momentum.signals import LIQUIDITY_MAX_STALE_DAYS, PRICE_MAX_STALE_DAYS, RANK_BY_CHOICES, MomentumConfig, observed_freshness, rank_momentum
 from etf_momentum.walkforward import METRICS, oos_equity, walk_forward
 from etf_momentum.weekly import append_snapshot, append_strategy_snapshot, build_weekly_report, load_previous_snapshot, load_strategy_snapshot
 
@@ -958,6 +958,36 @@ def _input_file_record(path: Path) -> dict[str, object]:
     return record
 
 
+def _holds_cash(scenarios: list[dict]) -> bool:
+    """Some scenario keeps part of the money in the cash ETF (leverage below 1)."""
+    for scenario in scenarios:
+        leverages = scenario.get("leverage", 1.0)
+        for leverage in leverages if isinstance(leverages, list) else [leverages]:
+            try:
+                if float(leverage) < 1.0:
+                    return True
+            except (TypeError, ValueError):
+                continue  # PortfolioConfig reports invalid values
+    return False
+
+
+def _require_cash_closes(closes: pd.Series, calendar: pd.DatetimeIndex, ticker: str) -> None:
+    """Stop when the held cash ETF has no close for more than PRICE_MAX_STALE_DAYS evaluation days in a row
+    (after its first close): its return there would be a made-up 0%, not cash interest."""
+    seen = calendar.isin(closes.dropna().index)
+    if not seen.any():
+        return
+    positions = np.arange(len(calendar))
+    last = pd.Series(np.where(seen, positions, np.nan)).ffill().to_numpy()
+    gaps = positions - last
+    if np.nanmax(gaps) > PRICE_MAX_STALE_DAYS:
+        end = int(np.nanargmax(gaps))
+        raise SystemExit(
+            f"Cash ETF {ticker} has no close for {int(gaps[end])} evaluation days up to {calendar[end].date()}; "
+            "check its data or use a cash ETF with full history"
+        )
+
+
 def _used_sleeves(spec: dict) -> dict[str, dict]:
     """Sleeves some scenario holds (weight > 0). A sleeve every scenario weights 0 is not loaded or checked,
     so it cannot change or block the results. Non-numeric weights are kept for PortfolioConfig to reject."""
@@ -1042,6 +1072,8 @@ def run_portfolio_command(args: argparse.Namespace) -> None:
     )
     returns = pd.DataFrame(sleeve_returns)
     cash_returns = prices[cash_ticker].reindex(calendar).ffill().pct_change() if cash_ticker else None
+    if cash_ticker and _holds_cash(spec["scenarios"]):
+        _require_cash_closes(own_dates(cash_ticker), calendar, cash_ticker)
 
     curves: dict[str, pd.Series] = {}
     rows: list[dict[str, object]] = []
@@ -1334,7 +1366,8 @@ def _apply_proxies(
     if traded_value is not None:
         proxy_value = download_traded_value(tickers, start=start, end=args.end, cache_dir=args.cache_dir, refresh=args.refresh)
         available = {t: proxy_value[p] for t, p in proxies.items() if p in proxy_value.columns and t in traded_value.columns}
-        traded_value, _ = splice_proxies(traded_value, available, fx, scale=False)
+        traded_value, value_starts = splice_proxies(traded_value, available, fx, scale=False)
+        traded_value = _mask_stale_proxy_values(traded_value, available, fx, value_starts)
     args.proxy_history = {t: f"{proxies[t]} until {d.date()}" for t, d in starts.items() if d > prices.index[0]}
     for ticker, text in args.proxy_history.items():
         print(f"Proxy history: {ticker} <- {text}")
@@ -1401,6 +1434,22 @@ def _non_negative_int(value: str) -> int:
     if number < 0:
         raise argparse.ArgumentTypeError(f"must be >= 0, got {value}")
     return number
+
+
+def _mask_stale_proxy_values(
+    frame: pd.DataFrame, sources: dict[str, pd.Series], fx: pd.Series | None, starts: dict[str, pd.Timestamp]
+) -> pd.DataFrame:
+    """Blank proxy-filled rows (before each ETF's first own value) on which the proxy or FX had no new value.
+
+    splice_proxies carries the last proxy value forward without limit; the liquidity average then sees
+    these blanks and treats a proxy whose volume stopped as stale, like an ETF's own missing data."""
+    frame = frame.copy()
+    for ticker, first_real in starts.items():
+        before = frame.index[frame.index < first_real]
+        if len(before) and ticker in sources:
+            seen = proxy_observations(sources[ticker], fx, before)
+            frame.loc[before[~seen.to_numpy()], ticker] = np.nan
+    return frame
 
 
 def _observations(raw: pd.DataFrame, args: argparse.Namespace, prices: pd.DataFrame) -> pd.DataFrame:

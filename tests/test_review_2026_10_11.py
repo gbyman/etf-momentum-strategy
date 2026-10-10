@@ -91,3 +91,62 @@ def test_backtest_command_stops_on_a_missing_month_end_session(tmp_path, monkeyp
                                       "--cash", "CASH", "--start", "2022-01-01", "--output-dir", str(tmp_path / "o")])
     with pytest.raises(StaleDataError, match="2023-07-31"):
         cli.main()
+
+
+# N03: a proxy's traded value that stopped updating is not liquidity
+def test_stale_proxy_traded_value_is_not_liquid() -> None:
+    import etf_momentum.cli as cli
+    from etf_momentum.data import splice_proxies
+    from etf_momentum.signals import rank_momentum
+
+    local = pd.bdate_range("2023-01-02", "2023-07-31")
+    us = pd.bdate_range("2022-12-30", "2023-07-31")
+    proxy_price = pd.Series(100 * 1.002 ** np.arange(len(us)), index=us)
+    proxy_value = pd.Series(2_000_000.0, index=us)
+    proxy_value.loc["2023-04-29":] = np.nan  # the proxy's volume stops; its price keeps updating
+    fx = pd.Series(1300.0, index=us)
+    raw = pd.DataFrame({"A.KS": np.nan, "B.KS": 100.0}, index=local)
+    raw.loc["2023-06-26":, "A.KS"] = 260_000.0
+    value = pd.DataFrame({"A.KS": np.nan, "B.KS": 5e9}, index=local)
+    value.loc["2023-06-26":, "A.KS"] = 3e9
+    prices, _ = splice_proxies(raw, {"A.KS": proxy_price}, fx)
+    traded, starts = splice_proxies(value, {"A.KS": proxy_value}, fx, scale=False)
+    traded = cli._mask_stale_proxy_values(traded, {"A.KS": proxy_value}, fx, starts)
+    small = MomentumConfig(lookbacks=(5, 10, 20), skip_days=0, sma_window=10, volatility_window=10,
+                           min_avg_traded_value=1e9, liquidity_window=10)
+    row = rank_momentum(prices, pd.Timestamp("2023-06-20"), config=small, candidate_tickers=("A.KS",), traded_value=traded).iloc[0]
+    assert not row["liquid"] and not row["eligible"]
+    assert traded.loc["2023-06-26":, "A.KS"].eq(3e9).all()  # real values after listing are untouched
+
+
+# N05: a cash ETF gap is an error when a scenario keeps money in cash (leverage < 1)
+def run_portfolio_cli(tmp_path, monkeypatch, leverage: float) -> None:
+    import json
+    import sys
+
+    import etf_momentum.cli as cli
+
+    calendar = pd.bdate_range("2024-01-02", "2024-04-30")
+    closes = pd.DataFrame({"CAL": 100.0, "GOOD": np.linspace(100, 120, len(calendar)), "CASH": np.linspace(100, 101, len(calendar))}, index=calendar)
+    closes.loc["2024-02-01":"2024-03-15", "CASH"] = np.nan  # 32 sessions without a cash close
+
+    def download(tickers, raw=False, **kw):
+        frame = closes[list(tickers)].dropna(how="all")
+        return frame if raw else frame.ffill()
+
+    monkeypatch.setattr(cli, "download_prices", download)
+    spec = {"base_currency": "KRW", "calendar_ticker": "CAL", "cash_ticker": "CASH",
+            "sleeves": {"good": {"ticker": "GOOD", "currency": "KRW"}},
+            "scenarios": [{"name": "g", "weights": {"good": 1.0}, "leverage": leverage}]}
+    (tmp_path / "spec.json").write_text(json.dumps(spec))
+    monkeypatch.setattr(sys, "argv", ["etf-momentum", "portfolio", "--spec", str(tmp_path / "spec.json"), "--output-dir", str(tmp_path / "o")])
+    cli.main()
+
+
+def test_portfolio_cash_gap_stops_when_cash_is_held(tmp_path, monkeypatch) -> None:
+    with pytest.raises(SystemExit, match="CASH"):
+        run_portfolio_cli(tmp_path, monkeypatch, leverage=0.5)
+
+
+def test_portfolio_cash_gap_is_ignored_when_no_scenario_holds_cash(tmp_path, monkeypatch) -> None:
+    run_portfolio_cli(tmp_path, monkeypatch, leverage=1.0)

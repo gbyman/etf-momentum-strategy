@@ -51,6 +51,11 @@ FILTER_TABLE = [
     ("한국 또는 미국", "kr_pension_pension_10eok_10bp_robustgrid_tvoff_filter_kr_or_us"),
     ("필터 없음", "kr_pension_pension_10eok_10bp_robustgrid_tvoff_filter_none"),
 ]
+# Full Korean ETF universe (current listings only: survivorship bias), compared with the 60-ETF pension universe
+FULL_UNIVERSE_TABLE = [
+    ("연금저축 유니버스 60개 (기존)", "kr_pension_pension_10eok_10bp_robustgrid_tvoff"),
+    ("국내 상장 ETF 전체 (비교용)", "kr_all_pension_10eok_10bp_robustgrid_tvoff"),
+]
 EXECUTION_SCENARIOS = [
     ("연금 모멘텀(워크포워드), 같은 날 종가", "WF_same 100"),
     ("연금 모멘텀(워크포워드), 다음 날 종가", "WF_next 100"),
@@ -133,6 +138,11 @@ def main() -> None:
             rows = summary[summary["scenario"] == scenario]
             main, full = rows[main_period.loc[rows.index]].iloc[0], rows[~main_period.loc[rows.index]].iloc[0]
             out.append(row(label, main, full))
+
+    out.append("\n### 전체 ETF 유니버스 비교 (연금저축, 워크포워드, 생존 편향 있음)\n\n" + header)
+    for label, run in FULL_UNIVERSE_TABLE:
+        curve = wf_curve(run)
+        out.append(row(label, stats(curve, "kr", args.end), stats(curve, "kr", None)))
 
     portfolio_table("원화 기준 조합 (한국 거래일 기준 평가)", "results/portfolio/portfolio_summary.csv", COMBO_SCENARIOS)
     portfolio_table(

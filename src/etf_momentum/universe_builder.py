@@ -95,3 +95,35 @@ def correlation_groups(returns: pd.DataFrame, threshold: float = 0.9, min_overla
     for number, (_, group) in enumerate(sorted((g[0], g) for g in members.values() if len(g) > 1)):
         labels.iloc[sorted(group)] = number
     return labels
+
+
+UNIVERSE_COLUMNS = ["ticker", "name", "category", "enabled", "group", "pension_ok", "retirement_ok", "risk_asset", "proxy", "note"]
+RETIREMENT_EXCLUDED_NAME_PARTS = ("합성", "선물")  # derivative-type ETFs, approximated by name
+
+
+def build_universe(listing: pd.DataFrame, groups: pd.Series, proxies: dict[str, str]) -> pd.DataFrame:
+    """Universe CSV rows: every ETF enabled and allowed in pension accounts; synthetic/futures ETFs
+    not allowed in retirement accounts; only the cash ETF is a safe asset. A group is named after its
+    member with the largest traded value (ties and zeros: first ticker); an ETF alone has no group."""
+    frame = listing.sort_values("ticker").reset_index(drop=True)
+    numbers = groups.reindex(frame["ticker"]).to_numpy()
+    frame["number"] = numbers
+    names: dict[object, str] = {}
+    for number, members in frame[pd.notna(frame["number"])].groupby("number"):
+        best = members.sort_values(["traded_value", "ticker"], ascending=[False, True]).iloc[0]
+        names[number] = best["name"]
+    return pd.DataFrame(
+        {
+            "ticker": frame["ticker"],
+            "name": frame["name"],
+            "category": frame["tab"].map(TAB_NAMES).fillna("기타"),
+            "enabled": 1,
+            "group": [names[n] if pd.notna(n) else "" for n in frame["number"]],
+            "pension_ok": 1,
+            "retirement_ok": [0 if any(p in name for p in RETIREMENT_EXCLUDED_NAME_PARTS) else 1 for name in frame["name"]],
+            "risk_asset": [0 if t == CASH else 1 for t in frame["ticker"]],
+            "proxy": [proxies.get(t, "") for t in frame["ticker"]],
+            "note": "",
+        },
+        columns=UNIVERSE_COLUMNS,
+    )

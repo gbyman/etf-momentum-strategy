@@ -129,3 +129,38 @@ def test_recent_returns_use_benchmark_trading_days() -> None:
     raw.loc[index[-1], "069500.KS"] = np.nan  # a row the benchmark did not trade (stray holiday row)
     returns = recent_returns(raw, window=252)
     assert len(returns) == 252 and returns.index[-1] == index[-2]
+
+
+# Task 3: universe rows
+from etf_momentum.data import load_universe  # noqa: E402
+from etf_momentum.universe_builder import UNIVERSE_COLUMNS, build_universe  # noqa: E402
+
+
+def listing_frame() -> pd.DataFrame:
+    return pd.DataFrame(
+        [
+            {"ticker": "069500.KS", "name": "KODEX 200", "tab": 1, "traded_value": 2_000_000.0},
+            {"ticker": "102110.KS", "name": "TIGER 200", "tab": 1, "traded_value": 500_000.0},
+            {"ticker": "153130.KS", "name": "KODEX 단기채권", "tab": 6, "traded_value": 50_000.0},
+            {"ticker": "143850.KS", "name": "TIGER 미국S&P500선물(H)", "tab": 4, "traded_value": 0.0},
+            {"ticker": "218420.KS", "name": "KODEX 미국S&P500에너지(합성)", "tab": 4, "traded_value": 0.0},
+            {"ticker": "458730.KS", "name": "TIGER 미국배당다우존스", "tab": 4, "traded_value": 90_000.0},
+        ]
+    )
+
+
+def test_build_universe_marks_accounts_assets_groups_and_proxies(tmp_path) -> None:
+    groups = pd.Series({"069500.KS": 0, "102110.KS": 0, "143850.KS": 1, "218420.KS": 1, "153130.KS": pd.NA, "458730.KS": pd.NA})
+    universe = build_universe(listing_frame(), groups, {"458730.KS": "SCHD", "999999.KS": "SPY"}).set_index("ticker")
+    assert list(universe.reset_index().columns) == UNIVERSE_COLUMNS
+    assert universe.loc["102110.KS", "group"] == "KODEX 200"  # largest traded value names the group
+    assert universe.loc["218420.KS", "group"] == "TIGER 미국S&P500선물(H)"  # all 0: first ticker (143850) names it
+    assert universe.loc["458730.KS", "group"] == "" and universe.loc["458730.KS", "proxy"] == "SCHD"
+    assert universe.loc["143850.KS", "retirement_ok"] == 0 and universe.loc["218420.KS", "retirement_ok"] == 0
+    assert universe.loc["069500.KS", "retirement_ok"] == 1 and (universe["pension_ok"] == 1).all()
+    assert universe.loc["153130.KS", "risk_asset"] == 0 and universe["risk_asset"].sum() == len(universe) - 1
+    assert universe.loc["458730.KS", "category"] == "해외 주식" and (universe["enabled"] == 1).all()
+    path = tmp_path / "u.csv"
+    universe.reset_index().to_csv(path, index=False)
+    members = {m.ticker: m for m in load_universe(path)}
+    assert members["153130.KS"].risk_asset is False and members["458730.KS"].proxy == "SCHD"

@@ -6,6 +6,10 @@ filter_etf_list -> drop_unpriced -> recent_returns -> correlation_groups -> buil
 
 from __future__ import annotations
 
+import json
+import os
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
 
@@ -127,3 +131,19 @@ def build_universe(listing: pd.DataFrame, groups: pd.Series, proxies: dict[str, 
         },
         columns=UNIVERSE_COLUMNS,
     )
+
+
+def write_universe(universe: pd.DataFrame, meta: dict, output: Path) -> None:
+    """Write the CSV and its .meta.json through temporary files, so a failure leaves the old files."""
+    output = Path(output)
+    meta_path = output.with_name(f"{output.stem}.meta.json")
+    csv_tmp = output.with_name(f"{output.name}.tmp")
+    meta_tmp = meta_path.with_name(f"{meta_path.name}.tmp")
+    try:
+        meta_tmp.write_text(json.dumps(meta, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        universe.to_csv(csv_tmp, index=False)
+        os.replace(csv_tmp, output)
+        os.replace(meta_tmp, meta_path)
+    finally:
+        for path in (csv_tmp, meta_tmp):
+            path.unlink(missing_ok=True)

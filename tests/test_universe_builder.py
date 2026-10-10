@@ -164,3 +164,20 @@ def test_build_universe_marks_accounts_assets_groups_and_proxies(tmp_path) -> No
     universe.reset_index().to_csv(path, index=False)
     members = {m.ticker: m for m in load_universe(path)}
     assert members["153130.KS"].risk_asset is False and members["458730.KS"].proxy == "SCHD"
+
+
+# Task 4: atomic write
+from etf_momentum.universe_builder import write_universe  # noqa: E402
+
+
+def test_write_universe_replaces_files_and_keeps_old_on_failure(tmp_path) -> None:
+    output = tmp_path / "universe_kr_all.csv"
+    output.write_text("old")
+    universe = build_universe(listing_frame(), pd.Series(dtype="object"), {})
+    write_universe(universe, {"built_at": "2026-10-10"}, output)
+    assert pd.read_csv(output)["ticker"].tolist()[0] == "069500.KS"
+    assert '"built_at": "2026-10-10"' in (tmp_path / "universe_kr_all.meta.json").read_text()
+    before = output.read_text()
+    with pytest.raises(TypeError):
+        write_universe(universe, {"bad": object()}, output)  # meta not JSON-serializable
+    assert output.read_text() == before and not list(tmp_path.glob("*.tmp"))

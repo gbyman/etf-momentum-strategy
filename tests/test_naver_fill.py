@@ -38,14 +38,14 @@ def test_interior_gaps_are_chained_from_naver_returns() -> None:
     filled, report = naver.fill_gaps(yahoo, fetch=fake_fetch(NAVER))
     assert filled.loc["2023-07-31", "A.KS"] == pytest.approx(520.0 * 1050 / 1040)
     assert filled.loc["2023-08-01", "A.KS"] == pytest.approx(520.0 * 1060 / 1040)
-    assert report == {"A.KS": ["2023-07-31", "2023-08-01"]}
+    assert report == {"filled": {"A.KS": ["2023-07-31", "2023-08-01"]}, "approximate": {}, "unfilled": {}}
     assert filled["SPY"].equals(yahoo["SPY"])  # non-Korean tickers are left alone
 
 
 def test_rows_are_added_when_no_ticker_has_the_day() -> None:
     yahoo = pd.DataFrame({"A.KS": np.arange(500.0, 500.0 + 5 * len(DAYS), 5)}, index=DAYS).drop(pd.Timestamp("2023-07-31"))
     filled, report = naver.fill_gaps(yahoo, fetch=fake_fetch(NAVER))
-    assert pd.Timestamp("2023-07-31") in filled.index and report["A.KS"] == ["2023-07-31"]
+    assert pd.Timestamp("2023-07-31") in filled.index and report["filled"]["A.KS"] == ["2023-07-31"]
 
 
 def test_no_fill_before_the_first_or_after_the_last_yahoo_close() -> None:
@@ -53,7 +53,7 @@ def test_no_fill_before_the_first_or_after_the_last_yahoo_close() -> None:
     yahoo.loc[:"2023-07-25", "A.KS"] = np.nan  # not listed yet (in Yahoo)
     yahoo.loc["2023-08-03":, "A.KS"] = np.nan  # not published yet (could be an intraday price on Naver)
     filled, report = naver.fill_gaps(yahoo, fetch=fake_fetch(NAVER))
-    assert report == {} and filled["A.KS"].isna().sum() == 4
+    assert report["filled"] == {} and filled["A.KS"].isna().sum() == 4
 
 
 def test_day_naver_lacks_stays_missing_and_unfilled_tickers_are_not_fetched() -> None:
@@ -62,8 +62,53 @@ def test_day_naver_lacks_stays_missing_and_unfilled_tickers_are_not_fetched() ->
     yahoo.loc["2023-07-31", "A.KS"] = np.nan
     fetch = fake_fetch(closes)
     filled, report = naver.fill_gaps(yahoo, fetch=fetch)
-    assert np.isnan(filled.loc["2023-07-31", "A.KS"]) and report == {}
+    assert np.isnan(filled.loc["2023-07-31", "A.KS"]) and report["filled"] == {}
+    assert report["unfilled"] == {"A.KS": ["2023-07-31"]}
     assert fetch.calls == ["069500.KS", "A.KS"]  # B.KS had no gap
+
+
+THREE = pd.bdate_range("2024-01-02", periods=3)
+
+
+def distribution_case(raw: list[float], adjusted: list[float]):
+    yahoo = pd.DataFrame({"A.KS": adjusted}, index=THREE)
+    closes = {"069500.KS": pd.Series(100.0, index=THREE), "A.KS": pd.Series(raw, index=THREE)}
+    return naver.fill_gaps(yahoo, fetch=fake_fetch(closes))
+
+
+def test_distribution_inside_the_gap_is_not_counted_as_a_loss() -> None:
+    # raw closes 100 -> 90 -> 90 with a distribution of 10 on day 2: adjusted closes are flat at 90
+    filled, report = distribution_case([100.0, 90.0, 90.0], [90.0, np.nan, 90.0])
+    assert filled["A.KS"].tolist() == pytest.approx([90.0, 90.0, 90.0])
+    assert report["filled"] == {"A.KS": ["2024-01-03"]}
+    assert report["approximate"]["A.KS"] == {"2024-01-03": pytest.approx(1 / 0.9 - 1)}
+
+
+def test_split_inside_the_gap_keeps_the_adjusted_level() -> None:
+    filled, report = distribution_case([100.0, 50.0, 50.0], [50.0, np.nan, 50.0])
+    assert filled["A.KS"].tolist() == pytest.approx([50.0, 50.0, 50.0])
+    assert "2024-01-03" in report["approximate"]["A.KS"]
+
+
+def test_constant_adjustment_factor_is_exact_and_not_approximate() -> None:
+    # Yahoo adjusted = raw x 0.9 on both sides of the gap (a distribution before the window)
+    filled, report = distribution_case([100.0, 95.0, 98.0], [90.0, np.nan, 88.2])
+    assert filled.loc["2024-01-03", "A.KS"] == pytest.approx(85.5)
+    assert report["approximate"] == {}
+
+
+def test_empty_reference_calendar_is_an_error() -> None:
+    yahoo = pd.DataFrame({"A.KS": [90.0, 90.0]}, index=THREE[[0, 2]])  # Yahoo lacks the middle day
+    closes = {"069500.KS": pd.Series(dtype=float, index=pd.DatetimeIndex([])), "A.KS": pd.Series([100.0, 100.0, 100.0], index=THREE)}
+    with pytest.raises(ValueError, match="reference"):
+        naver.fill_gaps(yahoo, fetch=fake_fetch(closes))
+
+
+def test_reference_calendar_missing_a_yahoo_trading_day_is_an_error() -> None:
+    yahoo = pd.DataFrame({"A.KS": np.arange(500.0, 500.0 + 5 * len(DAYS), 5)}, index=DAYS)
+    closes = {**NAVER, "069500.KS": NAVER["069500.KS"].drop(pd.Timestamp("2023-07-28"))}  # truncated response
+    with pytest.raises(ValueError, match="2023-07-28"):
+        naver.fill_gaps(yahoo, fetch=fake_fetch(closes))
 
 
 # integration with the price cache
@@ -83,6 +128,7 @@ def test_download_fills_caches_and_records(tmp_path, monkeypatch) -> None:
     cache = data._cache_path(["A.KS", "B.KS"], "2023-07-24", "2023-08-05", tmp_path, prefix=data.PRICE_CACHE_PREFIX)
     record = json.loads(cache.with_name(cache.name + ".naver_fill.json").read_text())
     assert record["filled"] == {"A.KS": ["2023-07-31"]}
+    assert record["approximate"] == {} and record["unfilled"] == {} and record["version"] == data.NAVER_FILL_VERSION
 
 
 def test_cache_without_a_fill_record_is_downloaded_again(tmp_path, monkeypatch) -> None:
@@ -91,6 +137,31 @@ def test_cache_without_a_fill_record_is_downloaded_again(tmp_path, monkeypatch) 
     monkeypatch.setattr(data, "NAVER_FILL", True)
     monkeypatch.setattr(naver, "naver_closes", fake_fetch(NAVER))
     monkeypatch.setattr(data.yf, "download", lambda **kw: yahoo_frame())
+    raw = data.download_prices(["A.KS", "B.KS"], start="2023-07-24", end="2023-08-05", cache_dir=tmp_path, raw=True)
+    assert not np.isnan(raw.loc["2023-07-31", "A.KS"])
+
+
+def test_cache_with_an_older_fill_record_is_downloaded_again(tmp_path, monkeypatch) -> None:
+    cache = data._cache_path(["A.KS", "B.KS"], "2023-07-24", "2023-08-05", tmp_path, prefix=data.PRICE_CACHE_PREFIX)
+    yahoo_frame()["Close"].to_csv(cache)
+    record = data._fill_record_path(cache)
+    record.write_text(json.dumps({"filled": {}, "filled_days": 0, "reference": naver.REFERENCE}))  # before version 2
+    monkeypatch.setattr(data, "NAVER_FILL", True)
+    monkeypatch.setattr(naver, "naver_closes", fake_fetch(NAVER))
+    monkeypatch.setattr(data.yf, "download", lambda **kw: yahoo_frame())
+    raw = data.download_prices(["A.KS", "B.KS"], start="2023-07-24", end="2023-08-05", cache_dir=tmp_path, raw=True)
+    assert not np.isnan(raw.loc["2023-07-31", "A.KS"])
+    assert json.loads(record.read_text())["version"] == data.NAVER_FILL_VERSION
+
+
+def test_empty_naver_reference_is_not_cached_and_the_next_run_retries(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(data, "NAVER_FILL", True)
+    monkeypatch.setattr(naver, "naver_closes", fake_fetch({**NAVER, "069500.KS": pd.Series(dtype=float, index=pd.DatetimeIndex([]))}))
+    monkeypatch.setattr(data.yf, "download", lambda **kw: yahoo_frame())
+    with pytest.warns(UserWarning, match="Naver"):
+        data.download_prices(["A.KS", "B.KS"], start="2023-07-24", end="2023-08-05", cache_dir=tmp_path, raw=True)
+    assert not list(tmp_path.glob("prices_raw_*"))
+    monkeypatch.setattr(naver, "naver_closes", fake_fetch(NAVER))  # Naver is back
     raw = data.download_prices(["A.KS", "B.KS"], start="2023-07-24", end="2023-08-05", cache_dir=tmp_path, raw=True)
     assert not np.isnan(raw.loc["2023-07-31", "A.KS"])
 

@@ -24,6 +24,7 @@ PRICE_CACHE_PREFIX = "prices_raw"
 # Korean price caches get Yahoo's missing trading days filled from Naver (etf_momentum.naver) and a
 # `<cache>.naver_fill.json` record; a Korean cache without that record is downloaded again.
 NAVER_FILL = True
+NAVER_FILL_VERSION = 2  # 2: adjustment factor across the gap (1 chained raw returns onto adjusted prices)
 
 
 @dataclass(frozen=True)
@@ -258,13 +259,26 @@ def _cached_download(
     record = None
     if kind == "prices" and _needs_naver_fill(None, ticker_list):
         try:
-            frame, filled = naver.fill_gaps(frame, fetch=naver.naver_closes)
-        except Exception as exc:  # network or format problem: keep Yahoo's data, but don't freeze the gaps in a cache
+            frame, report = naver.fill_gaps(frame, fetch=naver.naver_closes)
+        except Exception as exc:  # network, format or incomplete-calendar problem: don't freeze the gaps in a cache
             warnings.warn(f"Naver gap fill failed ({exc}); prices not cached, the next run retries", stacklevel=3)
             return frame
-        record = {"filled": filled, "filled_days": sum(len(days) for days in filled.values()), "reference": naver.REFERENCE}
+        filled = report["filled"]
+        record = {
+            "version": NAVER_FILL_VERSION,
+            "reference": naver.REFERENCE,
+            "filled_days": sum(len(days) for days in filled.values()),
+            "approximate_days": sum(len(days) for days in report["approximate"].values()),
+            "unfilled_days": sum(len(days) for days in report["unfilled"].values()),
+            **report,
+        }
         if filled:
-            print(f"Naver closes filled {record['filled_days']} missing Yahoo trading day(s) in {len(filled)} Korean ticker(s)")
+            print(
+                f"Naver closes filled {record['filled_days']} missing Yahoo trading day(s) in {len(filled)} Korean ticker(s)"
+                f" ({record['approximate_days']} approximate: a distribution or split fell inside the gap)"
+            )
+        if report["unfilled"]:
+            print(f"Naver has no close for {record['unfilled_days']} missing Yahoo trading day(s); left missing")
     missing = [ticker for ticker in ticker_list if ticker not in frame.columns]
     if missing:
         # Don't cache a partial download: the cache would keep the gap until it expires.
@@ -281,10 +295,16 @@ def _fill_record_path(cache_path: Path) -> Path:
 
 
 def _needs_naver_fill(cache_path: Path | None, tickers: list[str]) -> bool:
-    """Korean prices need the Naver fill; with a cache path, only if that cache has no fill record yet."""
+    """Korean prices need the Naver fill; with a cache path, only if that cache has no current fill record."""
     if not NAVER_FILL or not any(naver.is_korean(t) for t in tickers):
         return False
-    return cache_path is None or not _fill_record_path(cache_path).exists()
+    if cache_path is None or not _fill_record_path(cache_path).exists():
+        return True
+    try:
+        record = json.loads(_fill_record_path(cache_path).read_text(encoding="utf-8"))
+    except ValueError:
+        return True
+    return not isinstance(record, dict) or record.get("version") != NAVER_FILL_VERSION
 
 
 def staleness_message(prices: pd.DataFrame, today: pd.Timestamp | None = None) -> str | None:

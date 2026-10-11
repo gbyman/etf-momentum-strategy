@@ -256,6 +256,9 @@ def _cached_download(
         frame = _extract_field(raw, ticker_list, "Close")
     else:
         frame = _extract_field(raw, ticker_list, "Close") * _extract_field(raw, ticker_list, "Volume")
+    if kind == "prices" and (invalid := _invalid_prices(frame).sum()).any():
+        counts = ", ".join(f"{ticker} ({count})" for ticker, count in invalid[invalid > 0].items())
+        warnings.warn(f"Invalid closes (zero, negative or infinite) treated as missing: {counts}", stacklevel=3)
     frame = clean(frame)
     record = None
     if kind == "prices" and _needs_naver_fill(None, ticker_list):
@@ -356,9 +359,16 @@ def _clean_traded_value(value: pd.DataFrame) -> pd.DataFrame:
     return value.sort_index().dropna(axis=1, how="all")
 
 
+def _invalid_prices(prices: pd.DataFrame) -> pd.DataFrame:
+    """Closes no ETF can have: zero, negative or infinite (e.g. Yahoo's negative adjusted closes)."""
+    values = prices.apply(pd.to_numeric, errors="coerce")
+    return values.notna() & ~(np.isfinite(values) & (values > 0))
+
+
 def _clean_raw_prices(prices: pd.DataFrame) -> pd.DataFrame:
-    """Sorted, without all-empty tickers or days; gaps stay NaN."""
-    return prices.sort_index().dropna(axis=1, how="all").dropna(axis=0, how="all")
+    """Sorted, invalid closes made missing, without all-empty tickers or days; gaps stay NaN."""
+    prices = prices.apply(pd.to_numeric, errors="coerce")
+    return prices.mask(_invalid_prices(prices)).sort_index().dropna(axis=1, how="all").dropna(axis=0, how="all")
 
 
 def _fill_prices(prices: pd.DataFrame) -> pd.DataFrame:

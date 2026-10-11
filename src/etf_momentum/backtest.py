@@ -108,7 +108,7 @@ def run_backtest(
     if len(rebalance_dates) < 2:
         raise ValueError("Not enough rebalance dates after warm-up period")
 
-    since_observed = _rows_since_observation(observed, prices.index) if observed is not None else None
+    since_observed = _rows_since_observation(observed, prices.index, sessions) if observed is not None else None
     strategy_returns = pd.Series(0.0, index=prices.index, name="strategy_return")
     positions: list[dict[str, object]] = []
     previous_weights = pd.Series(0.0, index=prices.columns)
@@ -468,12 +468,30 @@ def _cap_weights(weights: pd.Series, cap: float) -> pd.Series:
     return capped
 
 
-def _rows_since_observation(observed: pd.DataFrame, index: pd.DatetimeIndex) -> pd.DataFrame:
-    """Rows of `index` since each ticker's last real close (NaN before its first one)."""
+def _rows_since_observation(
+    observed: pd.DataFrame, index: pd.DatetimeIndex, sessions: pd.DatetimeIndex | None = None
+) -> pd.DataFrame:
+    """Rows of `index` since each ticker's last real close (NaN before its first one).
+
+    With exchange `sessions`, sessions missing from the data altogether (no row for any ticker) count
+    too: the age is at least the sessions since the last close, and on a row with a close, the sessions
+    skipped since the close before it."""
     seen = observed.reindex(index=index).fillna(False).astype(bool).to_numpy()
     positions = np.arange(len(index))[:, None]
     last = pd.DataFrame(np.where(seen, positions, np.nan)).ffill().to_numpy()
-    return pd.DataFrame(positions - last, index=index, columns=observed.columns)
+    age = positions - last
+    if sessions is not None and len(index):
+        counted = np.repeat(
+            pd.DatetimeIndex(sessions).sort_values().searchsorted(index, side="right").astype(float)[:, None],
+            seen.shape[1],
+            axis=1,
+        )
+        closes = pd.DataFrame(np.where(seen, counted, np.nan))
+        since_last = counted - closes.ffill().to_numpy()  # 0 on a row with a close
+        skipped = counted - closes.ffill().shift(1).to_numpy() - 1  # sessions between this close and the one before
+        age = np.fmax(age, np.where(seen, skipped, since_last))
+        age[np.isnan(last)] = np.nan
+    return pd.DataFrame(age, index=index, columns=observed.columns)
 
 
 def _trade_position(signal_pos: int, lag: int, trade_positions: np.ndarray, last_pos: int) -> int:

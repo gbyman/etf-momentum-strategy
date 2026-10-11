@@ -106,3 +106,13 @@ def test_naver_failure_warns_and_does_not_cache(tmp_path, monkeypatch) -> None:
         raw = data.download_prices(["A.KS", "B.KS"], start="2023-07-24", end="2023-08-05", cache_dir=tmp_path, raw=True)
     assert np.isnan(raw.loc["2023-07-31", "A.KS"])
     assert not list(tmp_path.glob("prices_raw_*"))
+
+
+def test_partial_download_is_still_filled_but_not_cached(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(data, "NAVER_FILL", True)
+    monkeypatch.setattr(naver, "naver_closes", fake_fetch(NAVER))
+    monkeypatch.setattr(data.yf, "download", lambda **kw: yahoo_frame())
+    with pytest.warns(UserWarning, match="NEW.KS"):
+        raw = data.download_prices(["A.KS", "B.KS", "NEW.KS"], start="2023-07-24", end="2023-08-05", cache_dir=tmp_path, raw=True)
+    assert raw.loc["2023-07-31", "A.KS"] == pytest.approx(520.0 * 1050 / 1040)
+    assert not list(tmp_path.glob("prices_raw_*"))

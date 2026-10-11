@@ -255,11 +255,6 @@ def _cached_download(
     else:
         frame = _extract_field(raw, ticker_list, "Close") * _extract_field(raw, ticker_list, "Volume")
     frame = clean(frame)
-    missing = [ticker for ticker in ticker_list if ticker not in frame.columns]
-    if missing:
-        # Don't cache a partial download: the cache would keep the gap until it expires.
-        warnings.warn(f"No {kind} data downloaded for {', '.join(missing)}; not cached, the next run retries", stacklevel=3)
-        return frame
     record = None
     if kind == "prices" and _needs_naver_fill(None, ticker_list):
         try:
@@ -270,6 +265,11 @@ def _cached_download(
         record = {"filled": filled, "filled_days": sum(len(days) for days in filled.values()), "reference": naver.REFERENCE}
         if filled:
             print(f"Naver closes filled {record['filled_days']} missing Yahoo trading day(s) in {len(filled)} Korean ticker(s)")
+    missing = [ticker for ticker in ticker_list if ticker not in frame.columns]
+    if missing:
+        # Don't cache a partial download: the cache would keep the gap until it expires.
+        warnings.warn(f"No {kind} data downloaded for {', '.join(missing)}; not cached, the next run retries", stacklevel=3)
+        return frame
     frame.to_csv(cache_path)
     if record is not None:
         _fill_record_path(cache_path).write_text(json.dumps(record, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")

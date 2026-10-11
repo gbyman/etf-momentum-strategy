@@ -958,29 +958,34 @@ def _input_file_record(path: Path) -> dict[str, object]:
     return record
 
 
-def _holds_cash(scenarios: list[dict]) -> bool:
-    """Some scenario keeps part of the money in the cash ETF (leverage below 1)."""
+def _cash_evaluation_dates(scenarios: list[dict], returns: pd.DataFrame) -> pd.DatetimeIndex:
+    """Dates on which some scenario keeps part of the money in the cash ETF (leverage below 1): from the
+    first to the last date all of that scenario's held sleeves have returns, as run_portfolio evaluates."""
+    dates = pd.DatetimeIndex([])
     for scenario in scenarios:
         leverages = scenario.get("leverage", 1.0)
-        for leverage in leverages if isinstance(leverages, list) else [leverages]:
-            try:
-                if float(leverage) < 1.0:
-                    return True
-            except (TypeError, ValueError):
-                continue  # PortfolioConfig reports invalid values
-    return False
+        try:
+            holds_cash = any(float(leverage) < 1.0 for leverage in (leverages if isinstance(leverages, list) else [leverages]))
+            names = [name for name, weight in scenario["weights"].items() if float(weight) > 0]
+        except (TypeError, ValueError):
+            continue  # PortfolioConfig reports invalid values
+        common = returns.reindex(columns=names).dropna().index if names else pd.DatetimeIndex([])
+        if holds_cash and not common.empty:
+            dates = dates.union(returns.index[(returns.index >= common[0]) & (returns.index <= common[-1])])
+    return dates
 
 
-def _require_cash_closes(closes: pd.Series, calendar: pd.DatetimeIndex, ticker: str) -> None:
+def _require_cash_closes(closes: pd.Series, calendar: pd.DatetimeIndex, ticker: str, dates: pd.DatetimeIndex) -> None:
     """Stop when the held cash ETF has no close for more than PRICE_MAX_STALE_DAYS evaluation days in a row
-    (after its first close): its return there would be a made-up 0%, not cash interest."""
+    (after its first close) on a date in `dates`: its return there would be a made-up 0%, not cash interest.
+    Rows are counted from the last close even when it is before `dates`."""
     seen = calendar.isin(closes.dropna().index)
     if not seen.any():
         return
     positions = np.arange(len(calendar))
     last = pd.Series(np.where(seen, positions, np.nan)).ffill().to_numpy()
-    gaps = positions - last
-    if np.nanmax(gaps) > PRICE_MAX_STALE_DAYS:
+    gaps = np.where(calendar.isin(dates), positions - last, np.nan)
+    if np.nanmax(gaps, initial=0) > PRICE_MAX_STALE_DAYS:
         end = int(np.nanargmax(gaps))
         raise SystemExit(
             f"Cash ETF {ticker} has no close for {int(gaps[end])} evaluation days up to {calendar[end].date()}; "
@@ -1072,8 +1077,8 @@ def run_portfolio_command(args: argparse.Namespace) -> None:
     )
     returns = pd.DataFrame(sleeve_returns)
     cash_returns = prices[cash_ticker].reindex(calendar).ffill().pct_change() if cash_ticker else None
-    if cash_ticker and _holds_cash(spec["scenarios"]):
-        _require_cash_closes(own_dates(cash_ticker), calendar, cash_ticker)
+    if cash_ticker and not (cash_dates := _cash_evaluation_dates(spec["scenarios"], returns)).empty:
+        _require_cash_closes(own_dates(cash_ticker), calendar, cash_ticker, cash_dates)
 
     curves: dict[str, pd.Series] = {}
     rows: list[dict[str, object]] = []

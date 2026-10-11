@@ -152,6 +152,44 @@ def test_portfolio_cash_gap_is_ignored_when_no_scenario_holds_cash(tmp_path, mon
     run_portfolio_cli(tmp_path, monkeypatch, leverage=1.0)
 
 
+# Recheck C03: only the dates a cash-holding scenario is evaluated on need cash closes
+def run_late_sleeve_cli(tmp_path, monkeypatch, gap: tuple[str, str]) -> None:
+    import json
+    import sys
+
+    import etf_momentum.cli as cli
+
+    calendar = pd.bdate_range("2023-01-02", "2024-04-30")
+    closes = pd.DataFrame({"CAL": 100.0, "CASH": 100 * 1.0001 ** np.arange(len(calendar))}, index=calendar)
+    closes.loc[gap[0]:gap[1], "CASH"] = np.nan
+    late = calendar[calendar >= "2024-01-02"]
+    pd.DataFrame({"strategy": 100 * 1.001 ** np.arange(len(late))}, index=late).to_csv(tmp_path / "late.csv")
+
+    def download(tickers, raw=False, **kw):
+        frame = closes[list(tickers)].dropna(how="all")
+        return frame if raw else frame.ffill()
+
+    monkeypatch.setattr(cli, "download_prices", download)
+    spec = {"base_currency": "KRW", "calendar_ticker": "CAL", "cash_ticker": "CASH",
+            "sleeves": {"late": {"equity_csv": str(tmp_path / "late.csv"), "currency": "KRW"}},
+            "scenarios": [{"name": "late", "weights": {"late": 1.0}, "leverage": 0.5}]}
+    (tmp_path / "spec.json").write_text(json.dumps(spec))
+    monkeypatch.setattr(sys, "argv", ["etf-momentum", "portfolio", "--spec", str(tmp_path / "spec.json"), "--output-dir", str(tmp_path / "o")])
+    cli.main()
+
+
+def test_cash_gap_before_the_scenario_is_evaluated_is_ignored(tmp_path, monkeypatch) -> None:
+    run_late_sleeve_cli(tmp_path, monkeypatch, gap=("2023-02-01", "2023-03-15"))
+    equity = pd.read_csv(tmp_path / "o" / "portfolio_equity.csv", index_col=0, parse_dates=True)
+    assert equity.index[0] == pd.Timestamp("2024-01-02")
+
+
+def test_cash_gap_running_into_the_evaluated_dates_stops(tmp_path, monkeypatch) -> None:
+    # no cash close from 2023-12-01 to 2024-01-10: the first evaluated days use a stale cash close
+    with pytest.raises(SystemExit, match="CASH"):
+        run_late_sleeve_cli(tmp_path, monkeypatch, gap=("2023-12-01", "2024-01-10"))
+
+
 # N06: the universe CSV and its meta are replaced as a pair
 def test_failed_meta_replace_keeps_the_old_pair(tmp_path, monkeypatch) -> None:
     import hashlib

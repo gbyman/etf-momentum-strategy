@@ -120,7 +120,12 @@ def run_backtest(
         last_pos = len(prices.index) - 1
         trade_pos = _trade_position(prices.index.get_loc(rebalance_date), lag, trade_positions, last_pos)
         start_pos = trade_pos + 1
-        end_pos = _trade_position(prices.index.get_loc(next_rebalance_date), lag, trade_positions, last_pos)
+        if idx == len(rebalance_dates) - 2:
+            # The last holdings run to the data's last row: the final period end is not a trade, and rows
+            # after the benchmark's last close still carry the held assets' real returns.
+            end_pos = last_pos
+        else:
+            end_pos = _trade_position(prices.index.get_loc(next_rebalance_date), lag, trade_positions, last_pos)
         if start_pos > end_pos:
             continue
         holding_dates = prices.index[start_pos : end_pos + 1]

@@ -235,7 +235,8 @@ def _cached_download(
         complete = complete and not (kind == "prices" and _needs_naver_fill(cache_path, ticker_list))
         if complete and (end is not None or age_hours <= max_age_hours):
             return cached
-        stale_cache = cache_path
+        if not (kind == "prices" and _needs_naver_fill(cache_path, ticker_list)):
+            stale_cache = cache_path  # an older Naver fill version is wrong, not just old: never a fallback
 
     Path(cache_dir).mkdir(parents=True, exist_ok=True)
     try:

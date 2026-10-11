@@ -154,6 +154,31 @@ def test_cache_with_an_older_fill_record_is_downloaded_again(tmp_path, monkeypat
     assert json.loads(record.read_text())["version"] == data.NAVER_FILL_VERSION
 
 
+def test_failed_download_does_not_fall_back_to_an_older_fill_version(tmp_path, monkeypatch) -> None:
+    cache = data._cache_path(["A.KS"], "2024-01-02", "2024-01-05", tmp_path, prefix=data.PRICE_CACHE_PREFIX)
+    pd.DataFrame({"A.KS": [90.0, 81.0, 90.0]}, index=THREE).to_csv(cache)  # version 1: distribution counted as a loss
+    data._fill_record_path(cache).write_text(json.dumps({"version": 1, "filled": {"A.KS": ["2024-01-03"]}}))
+    monkeypatch.setattr(data, "NAVER_FILL", True)
+    monkeypatch.setattr(data.yf, "download", lambda **kw: pd.DataFrame())
+    with pytest.raises(RuntimeError, match="No prices data"):
+        data.download_prices(["A.KS"], start="2024-01-02", end="2024-01-05", cache_dir=tmp_path, raw=True)
+
+
+def test_failed_download_still_falls_back_to_a_current_but_old_cache(tmp_path, monkeypatch) -> None:
+    cache = data._cache_path(["A.KS"], "2024-01-02", None, tmp_path, prefix=data.PRICE_CACHE_PREFIX)
+    pd.DataFrame({"A.KS": [90.0, 90.0, 90.0]}, index=THREE).to_csv(cache)
+    data._fill_record_path(cache).write_text(json.dumps({"version": data.NAVER_FILL_VERSION, "filled": {}}))
+    old = cache.stat().st_mtime - 3 * 86400
+    import os
+
+    os.utime(cache, (old, old))  # past max_age_hours: refreshed when possible
+    monkeypatch.setattr(data, "NAVER_FILL", True)
+    monkeypatch.setattr(data.yf, "download", lambda **kw: pd.DataFrame())
+    with pytest.warns(UserWarning, match="stale"):
+        prices = data.download_prices(["A.KS"], start="2024-01-02", cache_dir=tmp_path, raw=True)
+    assert prices["A.KS"].tolist() == [90.0, 90.0, 90.0]
+
+
 def test_empty_naver_reference_is_not_cached_and_the_next_run_retries(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(data, "NAVER_FILL", True)
     monkeypatch.setattr(naver, "naver_closes", fake_fetch({**NAVER, "069500.KS": pd.Series(dtype=float, index=pd.DatetimeIndex([]))}))

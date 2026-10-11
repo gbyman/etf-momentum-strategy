@@ -216,7 +216,10 @@ def load_strategy_snapshot(
     same = latest_day[latest_day["config_hash"] == config_hash]
     if not same.empty:
         return same.copy(), None
-    old_versions = ", ".join(str(v) for v in sorted({int(v) for v in latest_day["version"]}))
+    versions = sorted({int(v) for v in latest_day["version"]})
+    if versions == [version]:
+        return pd.DataFrame(), f"설정 내용(유니버스 등)이 바뀌어(버전 {version} 그대로) 새 기준으로 시작합니다"
+    old_versions = ", ".join(str(v) for v in versions)
     return pd.DataFrame(), f"설정이 바뀌어(버전 {old_versions}→{version}) 새 기준으로 시작합니다"
 
 

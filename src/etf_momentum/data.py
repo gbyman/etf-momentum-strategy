@@ -231,8 +231,11 @@ def _cached_download(
     if cache_path.exists() and not refresh:
         age_hours = (time.time() - cache_path.stat().st_mtime) / 3600
         cached = _read_cache(cache_path, clean)
-        complete = set(ticker_list) <= set(cached.columns)  # older versions cached partial downloads
+        missing = _recorded_missing(cache_path) if end is not None else []
+        complete = set(ticker_list) <= set(cached.columns) | set(missing)  # older versions cached partial downloads
         complete = complete and not (kind == "prices" and _needs_naver_fill(cache_path, ticker_list))
+        if complete and missing:
+            return _retry_missing(cache_path, cached, missing, start, end, kind)
         if complete and (end is not None or age_hours <= max_age_hours):
             return cached
         if not (kind == "prices" and _needs_naver_fill(cache_path, ticker_list)):
@@ -284,14 +287,79 @@ def _cached_download(
         if report["unfilled"]:
             print(f"Naver has no close for {record['unfilled_days']} missing Yahoo trading day(s); left missing")
     missing = [ticker for ticker in ticker_list if ticker not in frame.columns]
-    if missing:
-        # Don't cache a partial download: the cache would keep the gap until it expires.
+    if missing and end is None:
+        # Don't cache a partial latest download: the cache would keep the gap until it expires.
         warnings.warn(f"No {kind} data downloaded for {', '.join(missing)}; not cached, the next run retries", stacklevel=3)
         return frame
+    if missing:
+        # A pinned period never changes, so keep what came and ask again only for the missing tickers
+        # (e.g. an ETF listed after `end` never has data; re-downloading 788 tickers each run is slow).
+        warnings.warn(
+            f"No {kind} data downloaded for {', '.join(missing)}; cached without them, later runs retry only those",
+            stacklevel=3,
+        )
     frame.to_csv(cache_path)
     if record is not None:
         _fill_record_path(cache_path).write_text(json.dumps(record, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
+    _write_missing_record(cache_path, missing)
     return frame
+
+
+def _missing_record_path(cache_path: Path) -> Path:
+    return cache_path.with_name(cache_path.name + ".missing.json")
+
+
+def _recorded_missing(cache_path: Path) -> list[str]:
+    try:
+        return list(json.loads(_missing_record_path(cache_path).read_text(encoding="utf-8"))["missing"])
+    except (OSError, ValueError, KeyError, TypeError):
+        return []
+
+
+def _write_missing_record(cache_path: Path, missing: list[str]) -> None:
+    path = _missing_record_path(cache_path)
+    if missing:
+        path.write_text(json.dumps({"missing": sorted(missing)}, ensure_ascii=False) + "\n", encoding="utf-8")
+    elif path.exists():
+        path.unlink()
+
+
+def _retry_missing(
+    cache_path: Path, cached: pd.DataFrame, missing: list[str], start: str | None, end: str | None, kind: str
+) -> pd.DataFrame:
+    """Ask Yahoo again for the tickers a pinned cache lacks; merge any that come, keep the rest recorded."""
+    retry_dir = cache_path.parent / ".retry"
+    try:
+        found = _cached_download(missing, start, end, retry_dir, True, 0.0, kind)
+    except Exception as exc:  # still nothing (or no network): the cached tickers are complete as they are
+        found = pd.DataFrame()
+        reason = f" ({exc})" if not isinstance(exc, RuntimeError) else ""
+    else:
+        reason = ""
+    found = found[[t for t in missing if t in found.columns]] if not found.empty else found
+    still = [t for t in missing if t not in found.columns]
+    if still:
+        warnings.warn(f"Still no {kind} data for {', '.join(still)}{reason}; using the cache without them", stacklevel=4)
+    if found.empty:
+        return cached
+    merged = cached.join(found, how="outer").sort_index()
+    merged.to_csv(cache_path)
+    retry_record = _fill_record_path(_cache_path(sorted(missing), start, end, retry_dir, prefix=PRICE_CACHE_PREFIX))
+    if kind == "prices" and retry_record.exists():
+        _merge_fill_record(_fill_record_path(cache_path), json.loads(retry_record.read_text(encoding="utf-8")))
+    _write_missing_record(cache_path, still)
+    return merged
+
+
+def _merge_fill_record(path: Path, extra: dict) -> None:
+    if not path.exists():
+        return
+    record = json.loads(path.read_text(encoding="utf-8"))
+    for key in ("filled", "approximate", "unfilled"):
+        record[key] = {**record.get(key, {}), **extra.get(key, {})}
+    for key, part in (("filled_days", "filled"), ("approximate_days", "approximate"), ("unfilled_days", "unfilled")):
+        record[key] = sum(len(days) for days in record[part].values())
+    path.write_text(json.dumps(record, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
 
 
 def _fill_record_path(cache_path: Path) -> Path:

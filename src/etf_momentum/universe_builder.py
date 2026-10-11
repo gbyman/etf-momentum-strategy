@@ -20,7 +20,7 @@ BENCHMARK = "069500.KS"
 REQUIRED = (CASH, BENCHMARK)
 TAB_NAMES = {1: "국내 시장지수", 2: "국내 업종/테마", 3: "국내 파생", 4: "해외 주식", 5: "원자재", 6: "채권", 7: "기타"}
 EXCLUDED_TABS = (3, 6, 7)  # leveraged/inverse, bonds/rates/money market, bond-mixed/TDF
-EXCLUDED_NAME_PARTS = ("레버리지", "인버스", "2X")
+EXCLUDED_NAME_PARTS = ("레버리지", "인버스", "2X", "채권혼합")  # bond-mixed ETFs also sit in tabs 1/2
 
 
 def filter_etf_list(items: list[dict], always_include: tuple[str, ...] = REQUIRED) -> tuple[pd.DataFrame, dict[str, int]]:
@@ -30,13 +30,15 @@ def filter_etf_list(items: list[dict], always_include: tuple[str, ...] = REQUIRE
     traded_value in million KRW) sorted by ticker, and how many ETFs each rule removed."""
     excluded = {f"tab_{tab}": 0 for tab in EXCLUDED_TABS} | {"name": 0, "duplicate": 0}
     rows: dict[str, dict] = {}
+    seen: set[str] = set()
     for entry in items:
-        ticker = f"{str(entry['itemcode']).strip()}.KS"
+        ticker = f"{str(entry['itemcode']).strip().zfill(6)}.KS"  # an integer code would lose leading zeros
         name = str(entry["itemname"]).strip()
         tab = int(entry["etfTabCode"])
-        if ticker in rows:
+        if ticker in seen:
             excluded["duplicate"] += 1
             continue
+        seen.add(ticker)
         if ticker not in always_include:
             if tab in EXCLUDED_TABS:
                 excluded[f"tab_{tab}"] += 1

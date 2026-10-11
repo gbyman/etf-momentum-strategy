@@ -168,7 +168,7 @@ def test_unknown_execution_is_rejected() -> None:
 # 3-5. compare the month-end selection with what the user holds now (no quantities, no orders)
 def test_holdings_changes_split_keep_add_drop() -> None:
     changes = cli._holdings_changes(current=["A", "X", "CASH"], selected=["A", "C"], cash="CASH")
-    assert changes == {"keep": ["A"], "add": ["C"], "drop": ["X"]}  # the cash ETF is never "dropped"
+    assert changes == {"keep": ["A"], "add": ["C"], "drop": ["X"], "outside": []}  # the cash ETF is never "dropped"
 
 
 def test_rank_with_holdings_prints_the_comparison(reason_setup, monkeypatch, capsys, tmp_path) -> None:

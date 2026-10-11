@@ -307,11 +307,12 @@ def run_rank_command(args: argparse.Namespace) -> None:
     print(f"Saved: {output_dir / 'latest_selection.csv'}")
     if args.holdings:
         selected = selection.loc[selection["status"] == "selected", "ticker"].tolist()
-        changes = _holdings_changes(_parse_str_list(args.holdings), selected, args.cash)
+        changes = _holdings_changes(_parse_str_list(args.holdings), selected, args.cash, {m.ticker for m in members})
+        dropped = [f"{t}(유니버스 밖)" if t in changes["outside"] else t for t in changes["drop"]]
         print("\n[현재 보유와 비교] (수량·주문은 직접 정하세요)")
         print(f" 유지: {', '.join(changes['keep']) or '-'}")
         print(f" 신규 편입: {', '.join(changes['add']) or '-'}")
-        print(f" 선정 제외: {', '.join(changes['drop']) or '-'}")
+        print(f" 선정 제외: {', '.join(dropped) or '-'}")
     strategy = getattr(args, "strategy_info", None)
     if strategy is not None:
         _record_month_end_signal(output_dir, strategy, selection[selection["status"] != "excluded"], prices, args)
@@ -327,13 +328,17 @@ def _selection_today(args: argparse.Namespace) -> pd.Timestamp | None:
     return end if end <= pd.Timestamp.today().normalize() else None
 
 
-def _holdings_changes(current: list[str], selected: list[str], cash: str | None) -> dict[str, list[str]]:
-    """Keep / add / drop against the selection; the cash ETF is a parking place, never 'dropped'."""
+def _holdings_changes(
+    current: list[str], selected: list[str], cash: str | None, universe: set[str] | None = None
+) -> dict[str, list[str]]:
+    """Keep / add / drop against the selection; the cash ETF is a parking place, never 'dropped'.
+    `outside`: held ETFs that are not in the universe at all (never ranked, so never selected)."""
     held = [t for t in current if t != cash]
     return {
         "keep": [t for t in selected if t in held],
         "add": [t for t in selected if t not in held],
         "drop": [t for t in held if t not in selected],
+        "outside": [t for t in held if universe is not None and t not in universe],
     }
 
 
@@ -1501,13 +1506,19 @@ def _require_fresh(observed: pd.DataFrame, required: dict[str, str | None]) -> N
         raise SystemExit(f"Stale data for required ticker(s): {', '.join(stale)}. Rerun with --refresh or check the ticker")
 
 
+# KRX closed on these days but exchange_calendars 4.13.2 lists them as sessions (checked against
+# Naver's KODEX 200 days on 2026-10-11): local elections, and Constitution Day as a holiday again.
+KRX_HOLIDAYS_MISSING_FROM_CALENDAR = pd.DatetimeIndex(["2026-06-03", "2026-07-17"])
+
+
 @functools.lru_cache(maxsize=4)
 def _exchange_sessions(benchmark: str) -> pd.DatetimeIndex | None:
     """Trading days of the benchmark's exchange: XKRX for .KS/.KQ tickers, otherwise XNYS."""
     import exchange_calendars as xc
 
     code = "XKRX" if benchmark.upper().endswith((".KS", ".KQ")) else "XNYS"
-    return pd.DatetimeIndex(xc.get_calendar(code, start="2005-01-01").sessions).tz_localize(None)
+    sessions = pd.DatetimeIndex(xc.get_calendar(code, start="2005-01-01").sessions).tz_localize(None)
+    return sessions.difference(KRX_HOLIDAYS_MISSING_FROM_CALENDAR) if code == "XKRX" else sessions
 
 
 def _month_end_sessions(benchmark: str, today: pd.Timestamp) -> pd.DatetimeIndex | None:

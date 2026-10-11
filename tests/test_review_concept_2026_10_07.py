@@ -155,14 +155,14 @@ def test_rank_uses_end_date_as_today_for_month_end() -> None:
 import etf_momentum.data as data  # noqa: E402
 
 
-def test_partly_failed_download_warns_and_is_not_cached(tmp_path, monkeypatch) -> None:
+def test_partly_failed_latest_download_warns_and_is_not_cached(tmp_path, monkeypatch) -> None:
     index = pd.to_datetime(["2020-01-02", "2020-01-03"])
     returned = pd.DataFrame(
         [[1.0, np.nan], [2.0, np.nan]], index=index, columns=pd.MultiIndex.from_product([["Close"], ["AAA", "BBB"]])
     )
     monkeypatch.setattr(data.yf, "download", lambda **kwargs: returned)
     with pytest.warns(UserWarning, match="BBB"):
-        prices = data.download_prices(["AAA", "BBB"], start="2020-01-01", end="2020-01-04", cache_dir=tmp_path)
+        prices = data.download_prices(["AAA", "BBB"], start="2020-01-01", cache_dir=tmp_path)
     assert list(prices.columns) == ["AAA"]
     assert not list(tmp_path.glob("*.csv"))  # next run retries instead of reusing a partial cache
 

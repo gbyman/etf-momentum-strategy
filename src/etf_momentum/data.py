@@ -329,6 +329,10 @@ def _retry_missing(
 ) -> pd.DataFrame:
     """Ask Yahoo again for the tickers a pinned cache lacks; merge any that come, keep the rest recorded."""
     retry_dir = cache_path.parent / ".retry"
+    prefix = PRICE_CACHE_PREFIX if kind == "prices" else kind
+    retry_cache = _cache_path(sorted(missing), start, end, retry_dir, prefix=prefix)
+    for leftover in (retry_cache, _fill_record_path(retry_cache), _missing_record_path(retry_cache)):
+        leftover.unlink(missing_ok=True)  # only this download's own cache may count as a success
     try:
         found = _cached_download(missing, start, end, retry_dir, True, 0.0, kind)
     except Exception as exc:  # still nothing (or no network): the cached tickers are complete as they are
@@ -336,6 +340,10 @@ def _retry_missing(
         reason = f" ({exc})" if not isinstance(exc, RuntimeError) else ""
     else:
         reason = ""
+    if not retry_cache.exists() or (kind == "prices" and _needs_naver_fill(retry_cache, missing)):
+        # Not cached by the download (e.g. the Naver fill failed): merging would freeze its gaps.
+        found = pd.DataFrame()
+        reason = reason or " (download not complete)"
     found = found[[t for t in missing if t in found.columns]] if not found.empty else found
     still = [t for t in missing if t not in found.columns]
     if still:
@@ -344,7 +352,7 @@ def _retry_missing(
         return cached
     merged = cached.join(found, how="outer").sort_index()
     merged.to_csv(cache_path)
-    retry_record = _fill_record_path(_cache_path(sorted(missing), start, end, retry_dir, prefix=PRICE_CACHE_PREFIX))
+    retry_record = _fill_record_path(retry_cache)
     if kind == "prices" and retry_record.exists():
         _merge_fill_record(_fill_record_path(cache_path), json.loads(retry_record.read_text(encoding="utf-8")))
     _write_missing_record(cache_path, still)

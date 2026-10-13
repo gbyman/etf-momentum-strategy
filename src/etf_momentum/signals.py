@@ -86,11 +86,13 @@ def rank_momentum(
     candidate_tickers: Iterable[str] | None = None,
     traded_value: pd.DataFrame | None = None,
     observed: pd.DataFrame | None = None,
+    sessions: pd.DatetimeIndex | None = None,
 ) -> pd.DataFrame:
     """Rank candidate ETFs. The benchmark only feeds relative strength unless it is itself a candidate.
 
     `observed` (date x ticker, True where a real close exists) makes price freshness come from real
-    observations; without it, a price unchanged for more than PRICE_MAX_STALE_DAYS days counts as stale."""
+    observations; without it, a price unchanged for more than PRICE_MAX_STALE_DAYS days counts as stale.
+    Exchange `sessions` make that age count sessions with no row in `prices` (see observed_freshness)."""
     config = config or MomentumConfig()
     if config.rank_by not in RANK_BY_CHOICES:
         raise ValueError(f"Unsupported rank_by: {config.rank_by}; choose from {', '.join(RANK_BY_CHOICES)}")
@@ -141,7 +143,7 @@ def rank_momentum(
         last_observed = None
         if observed is not None:
             mask = observed[ticker] if ticker in observed.columns else None
-            last_observed, price_fresh = observed_freshness(mask, history.index)
+            last_observed, price_fresh = observed_freshness(mask, history.index, sessions)
         realized_vol = float(vol[ticker]) if np.isfinite(vol[ticker]) else np.nan
         volatility_ok = bool(np.isfinite(realized_vol))
         risk_adjusted_score = (
@@ -208,9 +210,14 @@ def _price_freshness(series: pd.Series) -> tuple[pd.Timestamp | None, bool]:
     return values.index[position], unchanged_after <= PRICE_MAX_STALE_DAYS
 
 
-def observed_freshness(mask: pd.Series | None, index: pd.DatetimeIndex) -> tuple[pd.Timestamp | None, bool]:
+def observed_freshness(
+    mask: pd.Series | None, index: pd.DatetimeIndex, sessions: pd.DatetimeIndex | None = None
+) -> tuple[pd.Timestamp | None, bool]:
     """Last date in `index` with a real observation, and whether at most PRICE_MAX_STALE_DAYS rows
-    of `index` follow it. A ticker with no observation table column is stale."""
+    of `index` follow it. A ticker with no observation table column is stale.
+
+    With exchange `sessions`, the age is also at least the sessions after that date up to the last
+    row, so sessions missing from the data altogether (no row for any ticker) still count."""
     if mask is None:
         return None, False
     seen = mask.reindex(index, fill_value=False).to_numpy(dtype=bool)
@@ -218,7 +225,11 @@ def observed_freshness(mask: pd.Series | None, index: pd.DatetimeIndex) -> tuple
     if positions.size == 0:
         return None, False
     last = int(positions[-1])
-    return index[last], len(index) - 1 - last <= PRICE_MAX_STALE_DAYS
+    age = len(index) - 1 - last
+    if sessions is not None:
+        ordered = pd.DatetimeIndex(sessions).sort_values()
+        age = max(age, int(ordered.searchsorted(index[-1], side="right") - ordered.searchsorted(index[last], side="right")))
+    return index[last], age <= PRICE_MAX_STALE_DAYS
 
 
 def _average_traded_value(traded_value: pd.DataFrame | None, as_of: pd.Timestamp, window: int) -> pd.Series:

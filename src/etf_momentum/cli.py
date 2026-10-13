@@ -269,11 +269,12 @@ def run_rank_command(args: argparse.Namespace) -> None:
     observed = _observations(raw, args, prices)
     # The month-end selection names the cash ETF as the waiting asset, so it must have current data.
     _require_tickers(prices, _required(args, include_cash=True))
-    _require_fresh(observed, _required(args, include_cash=True))
+    _require_fresh(observed, _required(args, include_cash=True), _exchange_sessions(args.benchmark))
     save_run_metadata(output_dir, args, prices, traded_value=traded_value, execution=_execution_note(args))
     config = _momentum_config_from_args(args)
     ranking = rank_momentum(
-        prices, benchmark=args.benchmark, config=config, candidate_tickers=_candidates(members, args), traded_value=traded_value, observed=observed
+        prices, benchmark=args.benchmark, config=config, candidate_tickers=_candidates(members, args), traded_value=traded_value, observed=observed,
+        sessions=_exchange_sessions(args.benchmark),
     )
     _exit_if_empty(ranking)
     ranking = _attach_names(ranking, members)
@@ -397,6 +398,7 @@ def _month_end_selection(
         candidate_tickers=_candidates(members, args),
         traded_value=traded_value,
         observed=observed,
+        sessions=_exchange_sessions(args.benchmark),
     )
     rule = BacktestConfig(
         top_n=args.top_n,
@@ -512,11 +514,12 @@ def run_weekly_command(args: argparse.Namespace) -> None:
     prices, traded_value = _apply_proxies(members, prices, traded_value, start, args)
     observed = _observations(raw, args, prices)
     _require_tickers(prices, _required(args, include_cash=False, include_filters=False))
-    _require_fresh(observed, _required(args, include_cash=False, include_filters=False))
+    _require_fresh(observed, _required(args, include_cash=False, include_filters=False), _exchange_sessions(args.benchmark))
     save_run_metadata(output_dir, args, prices, traded_value=traded_value, execution=_execution_note(args))
     config = _momentum_config_from_args(args)
     ranking = rank_momentum(
-        prices, benchmark=args.benchmark, config=config, candidate_tickers=_candidates(members, args), traded_value=traded_value, observed=observed
+        prices, benchmark=args.benchmark, config=config, candidate_tickers=_candidates(members, args), traded_value=traded_value, observed=observed,
+        sessions=_exchange_sessions(args.benchmark),
     )
     _exit_if_empty(ranking)
     ranking = _attach_names(ranking, members)
@@ -594,7 +597,7 @@ def run_backtest_command(args: argparse.Namespace) -> None:
     prices, traded_value = _apply_proxies(members, prices, traded_value, args.start, args)
     observed = _observations(raw, args, prices)
     _require_tickers(prices, _required(args, include_cash=True))
-    _require_fresh(observed, _required(args, include_cash=True))
+    _require_fresh(observed, _required(args, include_cash=True), _exchange_sessions(args.benchmark))
     save_run_metadata(output_dir, args, prices, traded_value=traded_value, execution=_execution_note(args))
     momentum_config = _momentum_config_from_args(args)
     config = BacktestConfig(
@@ -624,6 +627,7 @@ def run_backtest_command(args: argparse.Namespace) -> None:
         candidate_tickers=config.candidate_tickers,
         traded_value=traded_value,
         observed=observed,
+        sessions=_exchange_sessions(args.benchmark),
     )
     ranking = _attach_names(ranking, members)
 
@@ -650,7 +654,7 @@ def run_compare_command(args: argparse.Namespace) -> None:
     prices, traded_value = _apply_proxies(members, prices, traded_value, args.start, args)
     observed = _observations(raw, args, prices)
     _require_tickers(prices, _required(args, include_cash=True))
-    _require_fresh(observed, _required(args, include_cash=True))
+    _require_fresh(observed, _required(args, include_cash=True), _exchange_sessions(args.benchmark))
     save_run_metadata(output_dir, args, prices, traded_value=traded_value, execution=_execution_note(args))
 
     base_momentum = _momentum_config_from_args(args)
@@ -791,7 +795,7 @@ def run_walkforward_command(args: argparse.Namespace) -> None:
     prices, traded_value = _apply_proxies(members, prices, traded_value, args.start, args)
     observed = _observations(raw, args, prices)
     _require_tickers(prices, _required(args, include_cash=True))
-    _require_fresh(observed, _required(args, include_cash=True))
+    _require_fresh(observed, _required(args, include_cash=True), _exchange_sessions(args.benchmark))
     save_run_metadata(output_dir, args, prices, traded_value=traded_value, execution=_execution_note(args))
     if args.cash and args.cash not in prices.columns:
         raise SystemExit(f"Cash ticker {args.cash} has no price data; use --cash none to hold uninvested cash")
@@ -1493,13 +1497,14 @@ def _month_end_date(prices: pd.DataFrame, observed: pd.DataFrame, args: argparse
         raise SystemExit(f"직전 월말 선택을 만들 수 없습니다: {exc}. --refresh로 데이터를 다시 받으세요") from exc
 
 
-def _require_fresh(observed: pd.DataFrame, required: dict[str, str | None]) -> None:
-    """Stop when a benchmark, market filter or cash ETF has no recent real observation."""
+def _require_fresh(observed: pd.DataFrame, required: dict[str, str | None], sessions: pd.DatetimeIndex | None = None) -> None:
+    """Stop when a benchmark, market filter or cash ETF has no recent real observation (in rows and,
+    with exchange `sessions`, in sessions)."""
     stale = []
     for role, ticker in required.items():
         if not ticker:
             continue
-        last, fresh = observed_freshness(observed[ticker] if ticker in observed.columns else None, observed.index)
+        last, fresh = observed_freshness(observed[ticker] if ticker in observed.columns else None, observed.index, sessions)
         if not fresh:
             stale.append(f"{role} {ticker} (last observation {last.date() if last is not None else 'none'})")
     if stale:

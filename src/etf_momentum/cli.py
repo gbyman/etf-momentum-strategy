@@ -409,7 +409,7 @@ def _month_end_selection(
         momentum=config,
         **_group_config(members, args),
     )
-    picked = select_holdings(ranking, prices, as_of, rule, observed=observed)
+    picked = select_holdings(ranking, prices, as_of, rule, observed=observed, sessions=_exchange_sessions(args.benchmark))
     names = {m.ticker: m.name for m in members}
     groups = {m.ticker: m.group for m in members}
     filters = ", ".join(_risk_on_tickers(args) or (args.benchmark,))

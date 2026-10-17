@@ -1,0 +1,43 @@
+{
+ "momentum": {
+  "lookbacks": [
+   63,
+   126,
+   252
+  ],
+  "skip": 21,
+  "weights": [
+   0.3,
+   0.3,
+   0.4
+  ],
+  "expected": 0.38792207964425396,
+  "actual": 0.38792207964425396,
+  "price_fresh": true
+ },
+ "buy_and_hold": {
+  "expected": 0.9950000000000001,
+  "actual": 0.9950000000000001,
+  "end_weight_A_expected": 0.49748743718592964,
+  "end_weight_A_actual": 0.49748743718592964
+ },
+ "daily_rebalanced": {
+  "expected": 0.9974999999999999,
+  "actual": 0.9974999999999999
+ },
+ "portfolio_initial_cost": {
+  "expected": [
+   1.0,
+   0.99
+  ],
+  "actual": [
+   1.0,
+   0.99
+  ]
+ },
+ "backtest_full_weight": {
+  "first_signal": "2024-01-31",
+  "expected_end": 1.3614324600940368,
+  "actual_end": 1.3614324600940364
+ }
+}

@@ -138,8 +138,9 @@ def run_backtest(
             candidate_tickers=config.candidate_tickers,
             traded_value=traded_value,
             observed=observed,
+            sessions=sessions,
         )
-        weights = _select_weights(ranking, prices, rebalance_date, config, observed)
+        weights = _select_weights(ranking, prices, rebalance_date, config, observed, sessions)
         weights, vol_scale, est_vol = _apply_volatility_target(weights, prices, rebalance_date, config)
         weights = _apply_risky_cap(weights, config)
         if since_observed is not None:
@@ -324,10 +325,12 @@ def select_holdings(
     rebalance_date: pd.Timestamp,
     config: BacktestConfig,
     observed: pd.DataFrame | None = None,
+    sessions: pd.DatetimeIndex | None = None,
 ) -> Selection:
     """Market filter, then eligible tickers in rank order under the group limit, up to top_n.
 
-    The backtest and the rank command both use this, so their picks follow the same rules.
+    The backtest and the rank command both use this, so their picks follow the same rules. Exchange
+    `sessions` make the filter's freshness count sessions with no row (see observed_freshness).
     """
     if config.top_n < 1:
         raise ValueError(f"top_n must be at least 1, got {config.top_n}")
@@ -342,7 +345,7 @@ def select_holdings(
             history = prices.loc[:rebalance_date].index
             stale = [
                 t for t in filters
-                if not observed_freshness(observed[t] if t in observed.columns else None, history)[1]
+                if not observed_freshness(observed[t] if t in observed.columns else None, history, sessions)[1]
             ]
             if stale:
                 raise StaleDataError(
@@ -392,9 +395,10 @@ def _select_weights(
     rebalance_date: pd.Timestamp,
     config: BacktestConfig,
     observed: pd.DataFrame | None = None,
+    sessions: pd.DatetimeIndex | None = None,
 ) -> pd.Series:
     weights = pd.Series(0.0, index=prices.columns)
-    selection = select_holdings(ranking, prices, rebalance_date, config, observed)
+    selection = select_holdings(ranking, prices, rebalance_date, config, observed, sessions)
     selected = selection.tickers
     if not selected:
         return _cash_weights(weights, config)

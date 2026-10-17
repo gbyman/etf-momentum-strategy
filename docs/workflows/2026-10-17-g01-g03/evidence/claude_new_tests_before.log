@@ -1,0 +1,111 @@
+F.FF.F                                                                   [100%]
+=================================== FAILURES ===================================
+__________ test_backtest_does_not_pick_a_candidate_stale_in_sessions ___________
+
+    def test_backtest_does_not_pick_a_candidate_stale_in_sessions() -> None:
+        raw = gapped()
+        config = BacktestConfig(top_n=1, candidate_tickers=("X", "B"), momentum=SMALL, benchmark="SPY", cash_ticker="BIL")
+>       _, positions, _ = run_backtest(raw.ffill(), config, observed=raw.notna(), sessions=XNYS)
+                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/test_g01_selection_sessions.py:48: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+src/etf_momentum/backtest.py:146: in run_backtest
+    _check_held_observations(since_observed, weights, holding_dates, also=config.benchmark)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+since_observed =               X    B  SPY  BIL
+2025-01-02  0.0  0.0  0.0  0.0
+2025-01-03  0.0  0.0  0.0  0.0
+2025-01-06  0.0  0.0  0.0....0
+2025-10-29  0.0  0.0  0.0  0.0
+2025-10-30  0.0  0.0  0.0  0.0
+2025-10-31  0.0  0.0  0.0  0.0
+
+[206 rows x 4 columns]
+weights = X      1.0
+B      0.0
+SPY    0.0
+BIL    0.0
+dtype: float64
+holding_dates = DatetimeIndex(['2025-10-01', '2025-10-02', '2025-10-03', '2025-10-06',
+               '2025-10-07', '2025-10-08', '202...2025-10-28',
+               '2025-10-29', '2025-10-30', '2025-10-31'],
+              dtype='datetime64[ns]', freq=None)
+also = 'SPY'
+
+    def _check_held_observations(
+        since_observed: pd.DataFrame, weights: pd.Series, holding_dates: pd.DatetimeIndex, also: str | None = None
+    ) -> None:
+        """A held asset whose closes stop mid-holding would earn a made-up 0%; stop instead. `also` (the
+        benchmark) is checked the same way: its returns are the comparison curve.
+    
+        Before an asset's first close (e.g. the cash ETF before listing) it is uninvested cash, as before."""
+        held = [t for t in weights.index[weights > 0] if t in since_observed.columns]
+        if also and also in since_observed.columns and also not in held:
+            held.append(also)
+        gaps = since_observed.loc[holding_dates, held]
+        stale = gaps.columns[(gaps > PRICE_MAX_STALE_DAYS).any()]
+        if len(stale):
+>           raise StaleDataError(
+                f"Held ticker(s) without a close for more than {PRICE_MAX_STALE_DAYS} trading days between "
+                f"{holding_dates[0].date()} and {holding_dates[-1].date()}: {', '.join(stale)}"
+            )
+E           etf_momentum.backtest.StaleDataError: Held ticker(s) without a close for more than 5 trading days between 2025-10-01 and 2025-10-31: X
+
+src/etf_momentum/backtest.py:538: StaleDataError
+_____________ test_backtest_market_filter_stale_in_sessions_stops ______________
+
+    def test_backtest_market_filter_stale_in_sessions_stops() -> None:
+        raw = gapped()
+        config = BacktestConfig(
+            top_n=1, candidate_tickers=("B",), momentum=SMALL, benchmark="SPY", cash_ticker="BIL",
+            risk_on_benchmark=True, risk_on_tickers=("X",),
+        )
+>       with pytest.raises(StaleDataError, match="Market filter.*2025-09-30.*X"):
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       Failed: DID NOT RAISE <class 'etf_momentum.backtest.StaleDataError'>
+
+tests/test_g01_selection_sessions.py:65: Failed
+_ test_select_holdings_counts_sessions_and_falls_back_to_rows_without_a_calendar _
+
+    def test_select_holdings_counts_sessions_and_falls_back_to_rows_without_a_calendar() -> None:
+        raw = gapped()
+        ranking = rank_momentum(raw.ffill(), MONTH_END, benchmark="SPY", config=SMALL, candidate_tickers=["B"], observed=raw.notna())
+        rule = BacktestConfig(top_n=1, momentum=SMALL, benchmark="SPY", cash_ticker="BIL", risk_on_benchmark=True, risk_on_tickers=("X",))
+        with pytest.raises(StaleDataError, match="Market filter"):
+>           select_holdings(ranking, raw.ffill(), MONTH_END, rule, observed=raw.notna(), sessions=XNYS)
+E           TypeError: select_holdings() got an unexpected keyword argument 'sessions'
+
+tests/test_g01_selection_sessions.py:74: TypeError
+__________ test_rank_month_end_market_filter_stale_in_sessions_stops ___________
+
+tmp_path = PosixPath('/private/var/folders/2y/j45wllms2ss8b2fx6qnhn93r0000gn/T/pytest-of-dc_macair/pytest-274/test_rank_month_end_market_fil0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x110112a50>
+
+    def test_rank_month_end_market_filter_stale_in_sessions_stops(tmp_path, monkeypatch) -> None:
+        # The latest row (10-07) is fresh for X, so only the month-end check can catch it.
+        raw = gapped()
+        response = raw.reindex(raw.index.union(NO_ROW)).loc[:"2025-10-07"]
+        response.columns = pd.MultiIndex.from_product([["Close"], list(raw.columns)])
+        monkeypatch.setattr(data.yf, "download", lambda **kw: response)
+        universe = tmp_path / "universe.csv"
+        pd.DataFrame(
+            {"ticker": ["X", "B", "SPY", "BIL"], "name": ["X", "B", "SPY", "BIL"], "category": ["eq", "eq", "eq", "cash"], "enabled": 1}
+        ).to_csv(universe, index=False)
+        argv = ["etf-momentum", "rank", "--universe", str(universe), "--benchmark", "SPY", "--cash", "BIL", "--top-n", "1",
+                "--risk-on-benchmark", "--risk-on-ticker", "X", "--lookback-years", "1", "--end", "2025-10-08",
+                "--lookbacks", "21,42,63", "--skip-days", "0", "--sma-window", "20", "--volatility-window", "20",
+                "--output-dir", str(tmp_path / "out"), "--cache-dir", str(tmp_path / "cache")]
+        monkeypatch.setattr(sys, "argv", argv)
+>       with contextlib.redirect_stdout(io.StringIO()), pytest.raises(StaleDataError, match="Market filter.*X"):
+                                                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       Failed: DID NOT RAISE <class 'etf_momentum.backtest.StaleDataError'>
+
+tests/test_g01_selection_sessions.py:105: Failed
+=========================== short test summary info ============================
+FAILED tests/test_g01_selection_sessions.py::test_backtest_does_not_pick_a_candidate_stale_in_sessions
+FAILED tests/test_g01_selection_sessions.py::test_backtest_market_filter_stale_in_sessions_stops
+FAILED tests/test_g01_selection_sessions.py::test_select_holdings_counts_sessions_and_falls_back_to_rows_without_a_calendar
+FAILED tests/test_g01_selection_sessions.py::test_rank_month_end_market_filter_stale_in_sessions_stops
+4 failed, 2 passed in 0.71s

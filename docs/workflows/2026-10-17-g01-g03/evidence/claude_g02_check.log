@@ -1,0 +1,128 @@
+Naver closes filled 1 missing Yahoo trading day(s) in 1 Korean ticker(s) (0 approximate: a distribution or split fell inside the gap)
+Naver closes filled 1 missing Yahoo trading day(s) in 1 Korean ticker(s) (0 approximate: a distribution or split fell inside the gap)
+{
+ "fail_then_recover": {
+  "1_initial": {
+   "columns": [
+    "A.KS"
+   ],
+   "missing_record": [
+    "NEW.KS"
+   ],
+   "warnings": [
+    "No prices data downloaded for NEW.KS; cached without them, later runs retry only those"
+   ]
+  },
+  "2_retry_naver_down": {
+   "yahoo_requests": [
+    [
+     "NEW.KS"
+    ]
+   ],
+   "returned_columns": [
+    "A.KS"
+   ],
+   "cached_columns": [
+    "A.KS"
+   ],
+   "missing_record": [
+    "NEW.KS"
+   ],
+   "warnings": [
+    "Naver gap fill failed (Naver temporarily unavailable); prices not cached, the next run retries",
+    "Still no prices data for NEW.KS (download not complete); using the cache without them"
+   ]
+  },
+  "3_retry_naver_back": {
+   "yahoo_requests": [
+    [
+     "NEW.KS"
+    ]
+   ],
+   "NEW.KS": [
+    100.0,
+    110.0,
+    120.0
+   ],
+   "missing_record_exists": false,
+   "fill_record_NEW": [
+    "2024-01-03"
+   ],
+   "warnings": []
+  },
+  "4_complete_cache_reused": {
+   "columns": [
+    "A.KS",
+    "NEW.KS"
+   ],
+   "warnings": []
+  }
+ },
+ "leftover_retry_files": {
+  "1_initial": {
+   "columns": [
+    "A.KS"
+   ],
+   "missing_record": [
+    "NEW.KS"
+   ],
+   "warnings": [
+    "No prices data downloaded for NEW.KS; cached without them, later runs retry only those"
+   ]
+  },
+  "1b_leftover_written": "leftover_retry_files/.retry/prices_raw_NEW_KS_2024-01-01_2024-01-05.csv",
+  "2_retry_naver_down": {
+   "yahoo_requests": [
+    [
+     "NEW.KS"
+    ]
+   ],
+   "returned_columns": [
+    "A.KS"
+   ],
+   "cached_columns": [
+    "A.KS"
+   ],
+   "missing_record": [
+    "NEW.KS"
+   ],
+   "warnings": [
+    "Naver gap fill failed (Naver temporarily unavailable); prices not cached, the next run retries",
+    "Still no prices data for NEW.KS (download not complete); using the cache without them"
+   ]
+  },
+  "3_retry_naver_back": {
+   "yahoo_requests": [
+    [
+     "NEW.KS"
+    ]
+   ],
+   "NEW.KS": [
+    100.0,
+    110.0,
+    120.0
+   ],
+   "missing_record_exists": false,
+   "fill_record_NEW": [
+    "2024-01-03"
+   ],
+   "warnings": []
+  },
+  "4_complete_cache_reused": {
+   "columns": [
+    "A.KS",
+    "NEW.KS"
+   ],
+   "warnings": []
+  }
+ },
+ "latest_partial": {
+  "columns": [
+   "A.KS"
+  ],
+  "cache_files": [],
+  "warnings": [
+   "No prices data downloaded for NEW.KS; not cached, the next run retries"
+  ]
+ }
+}

@@ -1,0 +1,90 @@
+{
+  "run_id": "run_2d8c6f88a708",
+  "repository": "/Users/dc_macair/Documents/Research/etf_momentum_strategy",
+  "orca_workspace": "/Users/dc_macair/Documents/Research",
+  "initial_head": "e596368be6d76bd604361b3a1d84d8af9a978399",
+  "coordinator": {
+    "provider": "codex",
+    "terminal_handle": "term_b7a2c688-ab8b-4c3b-90d0-fa9c735ff49b",
+    "role": "design, supervision, final assessment"
+  },
+  "implementation": {
+    "task_id": "task_760c6f74f201",
+    "provider": "claude",
+    "terminal_handle": "term_fb110ccb-c0d7-4d2a-9756-27e6b5c435ff",
+    "active_dispatch_id": "ctx_9208e5ea469e",
+    "initial_start_failure": {
+      "dispatch_id": "ctx_514e6c00f34d",
+      "stage": "dispatch_input",
+      "reason": "agent_not_in_foreground; terminal output: zsh: permission denied: claude",
+      "task_started": false,
+      "cleanup": "released; closed_agent_terminal; archive captured"
+    },
+    "submission": "input_accepted and turn_started observed; provider claude",
+    "state": "succeeded",
+    "cleanup": "retained by Orca because external_terminal; processAction none",
+    "model_evidence": "Worker reports system prompt claude-opus-5-5 and client /model Opus 5.5 high; runtime provider claude, model null. No API-level confirmation.",
+    "completion_delivery": "delivery_790c7c0f0eb9",
+    "completion_message": "msg_f57e9976c665"
+  },
+  "verification": {
+    "task_id": "task_b995ed9f7a8d",
+    "depends_on": [
+      "task_760c6f74f201"
+    ],
+    "provider": "antigravity",
+    "intended_terminal_handle": "term_567c60e9-acee-4353-8693-5ad4003f6187",
+    "model_evidence": "orca terminal read --screen: Gemini 4 Argon · medium, source=screen",
+    "state": "accepted_after_report_corrections_and_coordinator_audit",
+    "source_manifest_sha256": "a9c2e85fda59d1d572421f93b37b738652c560b38fdb3f208c06800f8070c049",
+    "active_dispatch_id": "ctx_85a9dca99d98",
+    "submission": "input_accepted; receipt observation permission; subsequent worker output shows task.md read and runtime activity working",
+    "completion_delivery": "delivery_079867967b84",
+    "completion_message": "msg_8c65e79c9dd5",
+    "cleanup": "same exact session reused for immediate evidence-report correction",
+    "report_accuracy": "First draft contained unsupported metadata/API/hash/count/coverage claims; not accepted as final report. Final corrected verification.md accepted against frozen source, saved results and logs; experiments remained unchanged."
+  },
+  "constraints": {
+    "commit": false,
+    "push": false,
+    "official_research_generation": false,
+    "product_editor": "claude",
+    "operational_data_writes": false
+  },
+  "report_correction": {
+    "task_id": "task_0d2be70977fe",
+    "active_dispatch_id": "ctx_e44ee3f1fde1",
+    "provider": "antigravity",
+    "model": "Gemini 4 Argon medium (same existing session)",
+    "state": "succeeded_with_final_factual_followup",
+    "depends_on": [
+      "task_b995ed9f7a8d"
+    ],
+    "scope": "verification report/evidence only; frozen source unchanged",
+    "completion_delivery": "delivery_00c32a71991a",
+    "completion_message": "msg_b563a7229fa5",
+    "cleanup": "same exact Gemini session reused for final factual precision"
+  },
+  "final_report_precision": {
+    "task_id": "task_b3671211161d",
+    "active_dispatch_id": "ctx_f81df92406ff",
+    "provider": "antigravity",
+    "state": "succeeded_accepted",
+    "depends_on": [
+      "task_0d2be70977fe"
+    ],
+    "scope": "exact factual edits to verification.md only; no tests/source changes",
+    "completion_delivery": "delivery_97d99c17b856",
+    "completion_message": "msg_b2ab5aad7c33",
+    "cleanup": "retained by Orca because external_terminal; no process action; delivery acknowledged"
+  },
+  "state": "completed_verified_with_documented_limits",
+  "final_audit": {
+    "tasks_completed": 4,
+    "reclaimable_workers": 0,
+    "pending_messages": 0,
+    "source_files_unchanged": 68,
+    "final_report": "final.md",
+    "notes": "All three model roles used actual Orca sessions. Original user sessions preserved; failed fresh Claude terminal released. Source hash/evidence integrity checked separately."
+  }
+}

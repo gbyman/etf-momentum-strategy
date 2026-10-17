@@ -1,0 +1,13 @@
+{
+  "head_match": true,
+  "head": "e596368be6d76bd604361b3a1d84d8af9a978399",
+  "expected_head": "e596368be6d76bd604361b3a1d84d8af9a978399",
+  "git_diff_sha256_match": true,
+  "git_diff_sha256": "a37c657463af9a7cbd93f2f9b43c69477dd6ed3f3c25e2a824d61ece1f0111e8",
+  "expected_git_diff_sha256": "a37c657463af9a7cbd93f2f9b43c69477dd6ed3f3c25e2a824d61ece1f0111e8",
+  "manifest_sha256": "0b6e771247bd34712a61dd008181e4e5f0e7a591ce9916ff875a7479d3e0a531",
+  "expected_manifest_sha256": "a9c2e85fda59d1d572421f93b37b738652c560b38fdb3f208c06800f8070c049",
+  "file_count": 68,
+  "mismatches": {},
+  "git_status": " M src/etf_momentum/backtest.py\n M src/etf_momentum/cli.py\n?? docs/orca_multi_agent_workflow.md\n?? docs/workflows/\n?? tests/test_g01_selection_sessions.py\n"
+}

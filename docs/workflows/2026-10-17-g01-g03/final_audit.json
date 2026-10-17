@@ -1,0 +1,15 @@
+{
+  "head": "e596368be6d76bd604361b3a1d84d8af9a978399",
+  "frozen_source_files": 68,
+  "source_mismatches": [],
+  "tracked_changes": [
+    "src/etf_momentum/backtest.py",
+    "src/etf_momentum/cli.py"
+  ],
+  "prior_workflow_preserved": true,
+  "evidence_files_verified": 20,
+  "input_files_verified": 13,
+  "data_results_newer_than_task": [],
+  "syntax_json_markdown_links": "pass",
+  "tests": "previously recorded full suites; no source changes after independent verification"
+}

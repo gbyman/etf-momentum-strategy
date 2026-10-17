@@ -1,0 +1,223 @@
+{
+  "g01": {
+    "boundary_5_6_8_and_normal": {
+      "gap_5_sessions": {
+        "last_obs_expected": "2025-09-23",
+        "last_obs_actual": "2025-09-23",
+        "indep_row_age": 1,
+        "indep_session_age": 5,
+        "indep_fresh": true,
+        "actual_fresh_with_sessions": true,
+        "actual_fresh_without_sessions_fallback": true,
+        "rank_price_fresh": true,
+        "rank_eligible": true,
+        "selected_tickers": [
+          "A"
+        ],
+        "matches_expected": true
+      },
+      "gap_6_sessions": {
+        "last_obs_expected": "2025-09-22",
+        "last_obs_actual": "2025-09-22",
+        "indep_row_age": 1,
+        "indep_session_age": 6,
+        "indep_fresh": false,
+        "actual_fresh_with_sessions": false,
+        "actual_fresh_without_sessions_fallback": true,
+        "rank_price_fresh": false,
+        "rank_eligible": false,
+        "selected_tickers": [
+          "B"
+        ],
+        "matches_expected": true
+      },
+      "gap_8_sessions": {
+        "last_obs_expected": "2025-09-18",
+        "last_obs_actual": "2025-09-18",
+        "indep_row_age": 1,
+        "indep_session_age": 8,
+        "indep_fresh": false,
+        "actual_fresh_with_sessions": false,
+        "actual_fresh_without_sessions_fallback": true,
+        "rank_price_fresh": false,
+        "rank_eligible": false,
+        "selected_tickers": [
+          "B"
+        ],
+        "matches_expected": true
+      },
+      "normal_current_observation_on_as_of": {
+        "last_obs_expected": "2025-09-30",
+        "last_obs_actual": "2025-09-30",
+        "fresh_expected": true,
+        "fresh_actual": true,
+        "matches_expected": true
+      }
+    },
+    "required_and_holidays": {
+      "require_fresh_5_sessions": {
+        "expected_pass": true,
+        "actual_pass": true,
+        "matches_expected": true
+      },
+      "require_fresh_6_sessions": {
+        "expected_pass": false,
+        "actual_pass": false,
+        "matches_expected": true
+      },
+      "row_age_exceeds_session_age": {
+        "row_age": 8,
+        "session_age": 5,
+        "expected_fresh": false,
+        "actual_fresh": false,
+        "matches_expected": true
+      },
+      "kr_chuseok_holiday_vs_us_sessions": {
+        "kr_sessions_after_2025_10_02_to_10_10": 1,
+        "us_sessions_after_2025_10_02_to_10_10": 6,
+        "kr_fresh_expected": true,
+        "kr_fresh_actual": true,
+        "us_fresh_expected": false,
+        "us_fresh_actual": false,
+        "kr_special_holidays_excluded": true,
+        "matches_expected": true
+      }
+    },
+    "command_propagation": {
+      "backtest_2025_09_30_with_sessions": "B",
+      "backtest_2025_09_30_without_sessions_fallback": "X",
+      "rank_month_end_2025_09_30_selected": [
+        "B"
+      ],
+      "rank_month_end_2025_09_30_excluded": [
+        {
+          "ticker": "X",
+          "reason": "최근 관측 없음 (마지막 2025-09-22)"
+        }
+      ],
+      "weekly_2025_09_30_X_price_fresh": false,
+      "weekly_2025_09_30_X_eligible": false,
+      "matches_expected": true
+    }
+  },
+  "g02": {
+    "pinned_partial_retry_and_latest": {
+      "step1_initial_partial_cache_ok": true,
+      "step2_naver_fail_and_leftover_rejected_ok": true,
+      "step3_recovery_and_partial_merge_ok": true,
+      "expected_late1_closes": [
+        500.0,
+        520.0,
+        540.0,
+        550.0
+      ],
+      "actual_late1_closes": [
+        500.0,
+        520.0,
+        540.0,
+        550.0
+      ],
+      "missing_after_partial_recovery": [
+        "LATE2.KS"
+      ],
+      "step4_latest_partial_not_cached_ok": true,
+      "matches_expected": true
+    }
+  },
+  "normal_and_local": {
+    "momentum_formula": {
+      "expected_weighted_momentum": 0.3416173147485835,
+      "actual_weighted_momentum": 0.3416173147485835,
+      "abs_diff_momentum": 0.0,
+      "expected_trend_strength": 0.18952568194666108,
+      "actual_trend_strength": 0.18952568194666108,
+      "expected_risk_adjusted_score": 6.83234629497167,
+      "actual_risk_adjusted_score": 6.83234629497167,
+      "matches_expected": true
+    },
+    "holding_and_cost_accounting": {
+      "buy_and_hold_expected": [
+        1.0,
+        1.049,
+        1.053995238095238,
+        1.0529412428571427
+      ],
+      "buy_and_hold_actual": [
+        1.0,
+        1.049,
+        1.053995238095238,
+        1.0529412428571427
+      ],
+      "daily_rebalanced_expected": [
+        1.0,
+        1.049,
+        1.049,
+        1.0479509999999999
+      ],
+      "daily_rebalanced_actual": [
+        1.0,
+        1.049,
+        1.049,
+        1.0479509999999999
+      ],
+      "total_cost_expected": 0.002,
+      "total_cost_actual": 0.002,
+      "matches_expected": true
+    },
+    "local_data_limits": {
+      "p60_exists": true,
+      "tv60_exists": true,
+      "p788_exists": true,
+      "p788_columns": 787,
+      "p788_recorded_missing": [
+        "0246X0.KS"
+      ],
+      "tv788_exists": false,
+      "univ_788_count": 788,
+      "univ_788_with_local_traded_value": 59,
+      "univ_788_missing_local_traded_value": 729,
+      "univ_60_count": 66,
+      "local_60_as_of_2026_09_30_top1": "139260.KS",
+      "local_60_top1_expected_wmom": 1.3268633006764898,
+      "local_60_top1_actual_wmom": 1.3268633006764898,
+      "local_60_top1_wmom_diff": 0.0,
+      "local_60_top5": [
+        {
+          "ticker": "139260.KS",
+          "rank": 1,
+          "eligible": true,
+          "weighted_momentum": 1.3268633006764898,
+          "risk_adjusted_score": 1.2843862349044632
+        },
+        {
+          "ticker": "091230.KS",
+          "rank": 2,
+          "eligible": true,
+          "weighted_momentum": 0.9426624557928809,
+          "risk_adjusted_score": 0.9627386345038134
+        },
+        {
+          "ticker": "091160.KS",
+          "rank": 3,
+          "eligible": true,
+          "weighted_momentum": 0.9178802297041152,
+          "risk_adjusted_score": 0.9353595764152242
+        },
+        {
+          "ticker": "292150.KS",
+          "rank": 4,
+          "eligible": true,
+          "weighted_momentum": 0.7346702769110914,
+          "risk_adjusted_score": 1.0187810883534976
+        },
+        {
+          "ticker": "102780.KS",
+          "rank": 5,
+          "eligible": true,
+          "weighted_momentum": 0.7145301776308668,
+          "risk_adjusted_score": 1.0672299757856434
+        }
+      ]
+    }
+  }
+}

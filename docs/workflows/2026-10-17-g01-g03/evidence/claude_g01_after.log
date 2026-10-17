@@ -1,0 +1,44 @@
+{
+ "X_last_close_before_0930": "2025-09-22",
+ "rows_after_until_0930": 3,
+ "sessions_after_until_0930": 6,
+ "rank_momentum_0930_with_sessions": {
+  "X": {
+   "price_fresh": false,
+   "eligible": false
+  },
+  "B": {
+   "price_fresh": true,
+   "eligible": true
+  }
+ },
+ "rank_momentum_0930_rows_only": {
+  "X": {
+   "price_fresh": true,
+   "rank": 1
+  },
+  "B": {
+   "price_fresh": true,
+   "rank": 2
+  }
+ },
+ "case1_backtest_signals": [
+  {
+   "rebalance_date": "2025-08-29",
+   "tickers": "B"
+  },
+  {
+   "rebalance_date": "2025-09-30",
+   "tickers": "B"
+  }
+ ],
+ "case2_backtest_filter": {
+  "result": "stopped",
+  "error": "Market filter ticker(s) without a recent observation at 2025-09-30: X"
+ },
+ "case2_select_holdings_no_sessions": "passed",
+ "case3_cli_rank": {
+  "result": "stopped",
+  "error": "StaleDataError: Market filter ticker(s) without a recent observation at 2025-09-30: X"
+ }
+}

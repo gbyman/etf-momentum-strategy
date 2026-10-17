@@ -1,0 +1,53 @@
+{
+ "X_last_close_before_0930": "2025-09-22",
+ "rows_after_until_0930": 3,
+ "sessions_after_until_0930": 6,
+ "rank_momentum_0930_with_sessions": {
+  "X": {
+   "price_fresh": false,
+   "eligible": false
+  },
+  "B": {
+   "price_fresh": true,
+   "eligible": true
+  }
+ },
+ "rank_momentum_0930_rows_only": {
+  "X": {
+   "price_fresh": true,
+   "rank": 1
+  },
+  "B": {
+   "price_fresh": true,
+   "rank": 2
+  }
+ },
+ "case1_backtest_error": "Held ticker(s) without a close for more than 5 trading days between 2025-10-01 and 2025-10-31: X",
+ "case2_backtest_filter": {
+  "result": "ran (no stop)",
+  "signals": [
+   {
+    "rebalance_date": "2025-08-29",
+    "tickers": "BIL"
+   },
+   {
+    "rebalance_date": "2025-09-30",
+    "tickers": "B"
+   }
+  ]
+ },
+ "case2_select_holdings_no_sessions": "passed",
+ "case3_cli_rank": {
+  "result": "ran",
+  "selection": [
+   {
+    "ticker": "B",
+    "status": "selected"
+   },
+   {
+    "ticker": "X",
+    "status": "excluded"
+   }
+  ]
+ }
+}

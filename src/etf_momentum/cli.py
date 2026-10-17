@@ -410,6 +410,8 @@ def _month_end_selection(
         **_group_config(members, args),
     )
     picked = select_holdings(ranking, prices, as_of, rule, observed=observed, sessions=_exchange_sessions(args.benchmark))
+    if picked.empty_slots and args.cash:
+        _require_month_end_cash(observed, args.cash, as_of, _exchange_sessions(args.benchmark))
     names = {m.ticker: m.name for m in members}
     groups = {m.ticker: m.group for m in members}
     filters = ", ".join(_risk_on_tickers(args) or (args.benchmark,))
@@ -1509,6 +1511,20 @@ def _require_fresh(observed: pd.DataFrame, required: dict[str, str | None], sess
             stale.append(f"{role} {ticker} (last observation {last.date() if last is not None else 'none'})")
     if stale:
         raise SystemExit(f"Stale data for required ticker(s): {', '.join(stale)}. Rerun with --refresh or check the ticker")
+
+
+def _require_month_end_cash(observed: pd.DataFrame, cash: str, as_of: pd.Timestamp, sessions: pd.DatetimeIndex | None) -> None:
+    """Stop when the month-end selection waits in a cash ETF that had no recent observation at that month end.
+
+    _require_fresh only checks the last row, so a cash ETF stale at the month end but back by the run
+    would pass. Before its first close (not yet listed) it stays uninvested cash, as in the backtest."""
+    history = observed.loc[:as_of]
+    last, fresh = observed_freshness(history[cash] if cash in history.columns else None, history.index, sessions)
+    if last is not None and not fresh:
+        raise SystemExit(
+            f"Stale data for cash {cash} at the month end {pd.Timestamp(as_of).date()} (last observation {last.date()}); "
+            "the month-end selection would wait in it. Rerun with --refresh or check the ticker"
+        )
 
 
 # KRX closed on these days but exchange_calendars 4.13.2 lists them as sessions (checked against

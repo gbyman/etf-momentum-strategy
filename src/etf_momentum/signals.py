@@ -116,7 +116,7 @@ def rank_momentum(
     vol = daily_returns.rolling(config.volatility_window).std().iloc[-1] * math.sqrt(TRADING_DAYS_PER_YEAR)
 
     benchmark_returns = _benchmark_returns(history, benchmark, config)
-    avg_value = _average_traded_value(traded_value, as_of, config.liquidity_window)
+    avg_value = _average_traded_value(traded_value, as_of, config.liquidity_window, sessions)
 
     # A repeated candidate is ranked once; otherwise it could fill two selection slots with one weight.
     candidates = history.columns if candidate_tickers is None else [t for t in dict.fromkeys(candidate_tickers) if t in history.columns]
@@ -232,11 +232,15 @@ def observed_freshness(
     return index[last], age <= PRICE_MAX_STALE_DAYS
 
 
-def _average_traded_value(traded_value: pd.DataFrame | None, as_of: pd.Timestamp, window: int) -> pd.Series:
+def _average_traded_value(
+    traded_value: pd.DataFrame | None, as_of: pd.Timestamp, window: int, sessions: pd.DatetimeIndex | None = None
+) -> pd.Series:
     """Mean daily traded value over the last `window` rows up to as_of.
 
     NaN (treated as illiquid) when fewer than two thirds of those days have data, or when the
     ticker's latest observation is more than LIQUIDITY_MAX_STALE_DAYS business days before as_of.
+    With exchange `sessions`, that age is also at least the sessions after the latest observation up
+    to as_of, so days missing from the table altogether (no row for any ticker) still count.
     """
     if traded_value is None or traded_value.empty:
         return pd.Series(dtype=float)
@@ -247,6 +251,15 @@ def _average_traded_value(traded_value: pd.DataFrame | None, as_of: pd.Timestamp
     trailing_missing = history.notna().iloc[::-1].cumsum().eq(0).sum()
     days_after_data = int(np.busday_count(history.index[-1].date(), pd.Timestamp(as_of).date()))
     fresh = (trailing_missing + days_after_data) <= LIQUIDITY_MAX_STALE_DAYS
+    if sessions is not None:
+        ordered = pd.DatetimeIndex(sessions).sort_values()
+        at = ordered.searchsorted(pd.Timestamp(as_of), side="right")
+        last_seen = history.apply(lambda column: column.last_valid_index())
+        age = pd.Series(
+            [at - ordered.searchsorted(day, side="right") if pd.notna(day) else np.inf for day in last_seen],
+            index=last_seen.index,
+        )
+        fresh = fresh & (age <= LIQUIDITY_MAX_STALE_DAYS)
     return recent.mean().where((recent.notna().sum() >= max(1, window * 2 // 3)) & fresh)
 
 
